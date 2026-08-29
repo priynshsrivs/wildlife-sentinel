@@ -1,20 +1,31 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import Webcam from 'react-webcam';
 import { 
-  ShieldAlert, 
-  Radio, 
-  RefreshCw, 
-  MapPin, 
-  UploadCloud, 
+  LayoutDashboard, 
+  Camera as CameraIcon, 
+  TriangleAlert, 
+  Map as MapIcon, 
+  BarChart3, 
   Video, 
+  Settings as SettingsIcon,
+  ShieldAlert,
+  Radio,
+  RefreshCw,
+  MapPin,
+  UploadCloud,
   Trash2,
-  Activity,
-  AlertTriangle,
-  Camera
+  Play,
+  Square,
+  CheckCircle2,
+  Sliders,
+  Battery,
+  Wifi,
+  Activity
 } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import L from 'leaflet';
 
-// Fix default leaflet marker icons in Vite/React
+// Leaflet default icon fix
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
@@ -26,6 +37,7 @@ const API_BASE = 'http://localhost:5000/api';
 const WS_URL = 'ws://localhost:5000/ws/alerts';
 
 export default function App() {
+  const [activeTab, setActiveTab] = useState('dashboard');
   const [alerts, setAlerts] = useState([]);
   const [stats, setStats] = useState({ 
     total_events: 0, 
@@ -34,77 +46,91 @@ export default function App() {
     wildlife_sightings: 0, 
     active_camera_nodes: 3 
   });
-  const [activeFilter, setActiveFilter] = useState('ALL');
+  const [analytics, setAnalytics] = useState(null);
+  const [cameras, setCameras] = useState([]);
+  const [cameraSubTab, setCameraSubTab] = useState('webcam'); // 'webcam' | 'upload'
+  const [alertFilter, setAlertFilter] = useState('ALL');
+  const [isWebcamStreaming, setIsWebcamStreaming] = useState(false);
+  const [webcamDetection, setWebcamDetection] = useState(null);
   const [wsConnected, setWsConnected] = useState(false);
   const [uploading, setUploading] = useState(false);
-  
+  const [confThreshold, setConfThreshold] = useState(0.45);
+
+  const webcamRef = useRef(null);
   const fileInputRef = useRef(null);
   const videoInputRef = useRef(null);
 
-  const fetchAlertsAndStats = async () => {
+  const fetchAllData = async () => {
     try {
-      const url = activeFilter === 'ALL' 
-        ? `${API_BASE}/alerts` 
-        : `${API_BASE}/alerts/filter?threat_level=${activeFilter}`;
-      
-      const [alertsRes, statsRes] = await Promise.all([
-        fetch(url),
-        fetch(`${API_BASE}/stats`)
+      const [alertsRes, statsRes, analyticsRes, camerasRes] = await Promise.all([
+        fetch(`${API_BASE}/alerts`),
+        fetch(`${API_BASE}/stats`),
+        fetch(`${API_BASE}/analytics`),
+        fetch(`${API_BASE}/cameras`)
       ]);
-      
-      if (alertsRes.ok) {
-        const alertsData = await alertsRes.json();
-        setAlerts(alertsData);
-      }
-      if (statsRes.ok) {
-        const statsData = await statsRes.json();
-        setStats(statsData);
-      }
+      if (alertsRes.ok) setAlerts(await alertsRes.json());
+      if (statsRes.ok) setStats(await statsRes.json());
+      if (analyticsRes.ok) setAnalytics(await analyticsRes.json());
+      if (camerasRes.ok) setCameras(await camerasRes.json());
     } catch (err) {
-      console.error('Failed to fetch initial data from backend', err);
+      console.error("Data synchronization error:", err);
     }
   };
 
-  // Real-time WebSocket connection to backend
   useEffect(() => {
-    fetchAlertsAndStats();
-
+    fetchAllData();
     const socket = new WebSocket(WS_URL);
-
-    socket.onopen = () => {
-      console.log('[✓] Connected to Wildlife Sentinel WebSocket Engine');
-      setWsConnected(true);
-    };
-
-    socket.onmessage = (event) => {
+    socket.onopen = () => setWsConnected(true);
+    socket.onmessage = (e) => {
       try {
-        const message = JSON.parse(event.data);
-        if (message.type === 'NEW_ALERT') {
-          setAlerts((prev) => {
-            if (activeFilter === 'ALL' || message.data.threat_level === activeFilter) {
-              return [message.data, ...prev];
-            }
-            return prev;
-          });
-          // Refresh aggregated analytics
-          fetch(`${API_BASE}/stats`)
-            .then((res) => res.json())
-            .then(setStats)
-            .catch((e) => console.error(e));
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'NEW_ALERT') {
+          setAlerts((prev) => [msg.data, ...prev]);
+          fetchAllData();
         }
       } catch (err) {
-        console.error('WebSocket payload parsing error', err);
+        console.error(err);
       }
     };
-
     socket.onerror = () => setWsConnected(false);
-    socket.onclose = () => {
-      console.log('WebSocket connection closed');
-      setWsConnected(false);
-    };
-
     return () => socket.close();
-  }, [activeFilter]);
+  }, []);
+
+  // Frame Capture for Laptop Camera Inference
+  const captureAndDetect = useCallback(async () => {
+    if (!webcamRef.current || !isWebcamStreaming) return;
+    const imageSrc = webcamRef.current.getScreenshot();
+    if (!imageSrc) return;
+
+    try {
+      const res = await fetch(imageSrc);
+      const blob = await res.blob();
+      const formData = new FormData();
+      formData.append('image', blob, 'webcam_frame.jpg');
+      formData.append('camera_id', 'LAPTOP_WEBCAM_EDGE');
+      formData.append('latitude', 12.9698);
+      formData.append('longitude', 79.1559);
+
+      const detectRes = await fetch(`${API_BASE}/detect`, {
+        method: 'POST',
+        body: formData
+      });
+      if (detectRes.ok) {
+        const data = await detectRes.json();
+        setWebcamDetection(data);
+      }
+    } catch (err) {
+      console.error("Webcam detection frame failed", err);
+    }
+  }, [isWebcamStreaming]);
+
+  useEffect(() => {
+    let interval;
+    if (isWebcamStreaming) {
+      interval = setInterval(captureAndDetect, 1200);
+    }
+    return () => clearInterval(interval);
+  }, [isWebcamStreaming, captureAndDetect]);
 
   const handleFileUpload = async (e, isVideo = false) => {
     const file = e.target.files[0];
@@ -119,18 +145,22 @@ export default function App() {
     setUploading(true);
     try {
       const endpoint = isVideo ? `${API_BASE}/detect/video` : `${API_BASE}/detect`;
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        body: formData,
-      });
-      if (res.ok) {
-        await fetchAlertsAndStats();
-      }
+      await fetch(endpoint, { method: 'POST', body: formData });
+      fetchAllData();
     } catch (err) {
-      console.error('Upload failed', err);
+      console.error(err);
     } finally {
       setUploading(false);
       e.target.value = null;
+    }
+  };
+
+  const handleResolveAlert = async (id) => {
+    try {
+      await fetch(`${API_BASE}/alerts/${id}/resolve`, { method: 'POST' });
+      fetchAllData();
+    } catch (err) {
+      console.error(err);
     }
   };
 
@@ -138,297 +168,409 @@ export default function App() {
     try {
       await fetch(`${API_BASE}/alerts/clear`, { method: 'DELETE' });
       setAlerts([]);
-      fetchAlertsAndStats();
+      fetchAllData();
     } catch (err) {
-      console.error('Failed to clear alerts log', err);
+      console.error(err);
     }
   };
 
+  const handleSettingsUpdate = async (val) => {
+    setConfThreshold(val);
+    try {
+      await fetch(`${API_BASE}/settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confidence_threshold: parseFloat(val) })
+      });
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const filteredAlerts = alerts.filter(a => {
+    if (alertFilter === 'ALL') return true;
+    return a.threat_level === alertFilter;
+  });
+
   return (
-    <div style={{ padding: '24px', maxWidth: '1440px', margin: '0 auto', color: '#f8fafc' }}>
-      {/* Top Header */}
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-          <div style={{ background: '#22c55e20', padding: '10px', borderRadius: '12px', border: '1px solid #22c55e40' }}>
-            <ShieldAlert size={30} color="#22c55e" />
+    <div style={{ display: 'flex', minHeight: '100vh', background: '#090d16', color: '#f8fafc', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+      
+      {/* Sidebar Navigation */}
+      <aside style={{ width: '260px', background: '#0d1322', borderRight: '1px solid #1e293b', padding: '24px 16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '0 8px 24px 8px', borderBottom: '1px solid #1e293b' }}>
+          <div style={{ background: '#22c55e20', padding: '8px', borderRadius: '10px', border: '1px solid #22c55e40' }}>
+            <ShieldAlert size={26} color="#22c55e" />
           </div>
           <div>
-            <h1 style={{ fontSize: '24px', fontWeight: 700, letterSpacing: '-0.02em', margin: 0 }}>Wildlife Sentinel</h1>
-            <p style={{ color: '#94a3b8', fontSize: '13px', margin: 0, marginTop: '2px' }}>
-              Autonomous AI Edge Threat Detection & Live Ranger Dispatch Network
-            </p>
+            <span style={{ fontWeight: 800, fontSize: '17px', letterSpacing: '-0.02em', display: 'block' }}>Wildlife Sentinel</span>
+            <span style={{ fontSize: '11px', color: '#94a3b8' }}>Enterprise AI Guard</span>
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <input 
-            type="file" 
-            accept="image/*" 
-            ref={fileInputRef} 
-            style={{ display: 'none' }} 
-            onChange={(e) => handleFileUpload(e, false)} 
-          />
-          <input 
-            type="file" 
-            accept="video/*" 
-            ref={videoInputRef} 
-            style={{ display: 'none' }} 
-            onChange={(e) => handleFileUpload(e, true)} 
-          />
+        <nav style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '16px' }}>
+          {[
+            { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={18} /> },
+            { id: 'camera', label: 'Camera Hub', icon: <CameraIcon size={18} /> },
+            { id: 'alert', label: 'Threat Alerts', icon: <TriangleAlert size={18} /> },
+            { id: 'map', label: 'Reserve Map', icon: <MapIcon size={18} /> },
+            { id: 'analytics', label: 'Analytics', icon: <BarChart3 size={18} /> },
+            { id: 'cameras', label: 'Camera Network', icon: <Video size={18} /> },
+            { id: 'settings', label: 'Settings', icon: <SettingsIcon size={18} /> },
+          ].map(item => (
+            <button
+              key={item.id}
+              onClick={() => setActiveTab(item.id)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                padding: '11px 14px',
+                borderRadius: '8px',
+                background: activeTab === item.id ? '#1e293b' : 'transparent',
+                color: activeTab === item.id ? '#38bdf8' : '#94a3b8',
+                border: 'none',
+                fontWeight: 600,
+                fontSize: '14px',
+                cursor: 'pointer',
+                textAlign: 'left',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              {item.icon} {item.label}
+            </button>
+          ))}
+        </nav>
+      </aside>
 
-          <button
-            onClick={() => fileInputRef.current.click()}
-            disabled={uploading}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              padding: '8px 14px',
-              borderRadius: '8px',
-              background: '#1e293b',
-              border: '1px solid #334155',
-              color: '#f8fafc',
-              cursor: 'pointer',
-              fontSize: '13px',
-              fontWeight: 600
-            }}
-          >
-            <UploadCloud size={16} /> {uploading ? 'Processing...' : 'Upload Image'}
-          </button>
-
-          <button
-            onClick={() => videoInputRef.current.click()}
-            disabled={uploading}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              padding: '8px 14px',
-              borderRadius: '8px',
-              background: '#1e293b',
-              border: '1px solid #334155',
-              color: '#f8fafc',
-              cursor: 'pointer',
-              fontSize: '13px',
-              fontWeight: 600
-            }}
-          >
-            <Video size={16} /> Upload Video/CCTV
-          </button>
-
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              padding: '8px 14px',
-              borderRadius: '8px',
-              background: wsConnected ? '#15803d20' : '#7f1d1d20',
-              border: `1px solid ${wsConnected ? '#22c55e' : '#ef4444'}`,
-              color: wsConnected ? '#4ade80' : '#f87171',
-              fontSize: '13px',
-              fontWeight: 600
-            }}
-          >
-            <Radio size={16} /> {wsConnected ? 'WebSocket Live' : 'Connecting...'}
+      {/* Main Content Area */}
+      <main style={{ flex: 1, padding: '32px', overflowY: 'auto' }}>
+        
+        {/* Header Strip */}
+        <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '28px' }}>
+          <div>
+            <h1 style={{ fontSize: '24px', fontWeight: 700, margin: 0, textTransform: 'capitalize' }}>{activeTab} Overview</h1>
+            <p style={{ color: '#94a3b8', fontSize: '13px', margin: '4px 0 0 0' }}>Real-time Edge Ingestion & Automated Geofenced Dispatch</p>
           </div>
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+            <span style={{ fontSize: '12px', padding: '6px 12px', borderRadius: '999px', background: wsConnected ? '#15803d20' : '#7f1d1d20', color: wsConnected ? '#4ade80' : '#f87171', border: `1px solid ${wsConnected ? '#22c55e' : '#ef4444'}` }}>
+              {wsConnected ? '● WebSocket Live' : '○ Offline'}
+            </span>
+            <button onClick={fetchAllData} title="Refresh Data" style={{ padding: '8px 12px', borderRadius: '8px', background: '#131b2e', border: '1px solid #1e293b', color: '#f8fafc', cursor: 'pointer' }}>
+              <RefreshCw size={16} />
+            </button>
+            <button onClick={handleClearAlerts} title="Reset Logs" style={{ padding: '8px 12px', borderRadius: '8px', background: '#2a1215', border: '1px solid #7f1d1d', color: '#f87171', cursor: 'pointer' }}>
+              <Trash2 size={16} />
+            </button>
+          </div>
+        </header>
 
-          <button
-            onClick={fetchAlertsAndStats}
-            title="Refresh Database"
-            style={{
-              padding: '8px 12px',
-              borderRadius: '8px',
-              background: '#1e293b',
-              border: '1px solid #334155',
-              color: '#f8fafc',
-              cursor: 'pointer'
-            }}
-          >
-            <RefreshCw size={16} />
-          </button>
+        {/* 1. DASHBOARD VIEW */}
+        {activeTab === 'dashboard' && (
+          <div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '24px' }}>
+              <div style={{ background: '#111827', border: '1px solid #1f2937', padding: '18px', borderRadius: '12px' }}>
+                <div style={{ color: '#9ca3af', fontSize: '13px' }}>Total Ingested Events</div>
+                <div style={{ fontSize: '28px', fontWeight: 700, marginTop: '4px' }}>{stats.total_events}</div>
+              </div>
+              <div style={{ background: '#271216', border: '1px solid #7f1d1d', padding: '18px', borderRadius: '12px' }}>
+                <div style={{ color: '#fca5a5', fontSize: '13px' }}>Critical Intrusions</div>
+                <div style={{ fontSize: '28px', fontWeight: 700, color: '#ef4444', marginTop: '4px' }}>{stats.critical_intrusions}</div>
+              </div>
+              <div style={{ background: '#0f241a', border: '1px solid #14532d', padding: '18px', borderRadius: '12px' }}>
+                <div style={{ color: '#86efac', fontSize: '13px' }}>Wildlife Sightings</div>
+                <div style={{ fontSize: '28px', fontWeight: 700, color: '#22c55e', marginTop: '4px' }}>{stats.wildlife_sightings}</div>
+              </div>
+              <div style={{ background: '#111827', border: '1px solid #1f2937', padding: '18px', borderRadius: '12px' }}>
+                <div style={{ color: '#9ca3af', fontSize: '13px' }}>Active Camera Nodes</div>
+                <div style={{ fontSize: '28px', fontWeight: 700, color: '#38bdf8', marginTop: '4px' }}>{stats.active_camera_nodes} Online</div>
+              </div>
+            </div>
 
-          <button
-            onClick={handleClearAlerts}
-            title="Reset Incident Logs"
-            style={{
-              padding: '8px 12px',
-              borderRadius: '8px',
-              background: '#2a1215',
-              border: '1px solid #7f1d1d',
-              color: '#f87171',
-              cursor: 'pointer'
-            }}
-          >
-            <Trash2 size={16} />
-          </button>
-        </div>
-      </header>
+            {/* Recent Camera Feed Stream */}
+            <div style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: '14px', padding: '20px' }}>
+              <h2 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>Live Sanctuary Feed Stream</h2>
+              {alerts.length === 0 ? (
+                <div style={{ padding: '40px', textAlign: 'center', color: '#6b7280' }}>No incidents recorded. Start webcam or upload sample footage.</div>
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '16px' }}>
+                  {alerts.slice(0, 4).map(alert => (
+                    <div key={alert.id} style={{ background: '#0b0f19', border: '1px solid #1f2937', borderRadius: '10px', overflow: 'hidden' }}>
+                      {alert.annotated_image ? (
+                        <img src={alert.annotated_image} alt="Feed Capture" style={{ width: '100%', height: '180px', objectFit: 'cover' }} />
+                      ) : (
+                        <div style={{ height: '120px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6b7280', fontSize: '12px' }}>LoRaWAN Telemetry Packet</div>
+                      )}
+                      <div style={{ padding: '12px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600 }}>
+                          <span>{alert.camera_id}</span>
+                          <span style={{ color: alert.threat_level === 'CRITICAL' ? '#ef4444' : '#22c55e', fontSize: '12px' }}>{alert.threat_level}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
-      {/* Metrics Row */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginBottom: '24px' }}>
-        <div style={{ background: '#131b2e', border: '1px solid #1e293b', padding: '18px', borderRadius: '12px' }}>
-          <div style={{ color: '#94a3b8', fontSize: '13px', marginBottom: '4px' }}>Total Ingested Events</div>
-          <div style={{ fontSize: '28px', fontWeight: 700 }}>{stats.total_events}</div>
-        </div>
-        <div style={{ background: '#2a1215', border: '1px solid #7f1d1d', padding: '18px', borderRadius: '12px' }}>
-          <div style={{ color: '#fca5a5', fontSize: '13px', marginBottom: '4px' }}>Critical Intrusion Alerts</div>
-          <div style={{ fontSize: '28px', fontWeight: 700, color: '#ef4444' }}>{stats.critical_intrusions}</div>
-        </div>
-        <div style={{ background: '#12251a', border: '1px solid #14532d', padding: '18px', borderRadius: '12px' }}>
-          <div style={{ color: '#86efac', fontSize: '13px', marginBottom: '4px' }}>Wildlife Sightings</div>
-          <div style={{ fontSize: '28px', fontWeight: 700, color: '#22c55e' }}>{stats.wildlife_sightings}</div>
-        </div>
-        <div style={{ background: '#131b2e', border: '1px solid #1e293b', padding: '18px', borderRadius: '12px' }}>
-          <div style={{ color: '#94a3b8', fontSize: '13px', marginBottom: '4px' }}>Active Camera Nodes</div>
-          <div style={{ fontSize: '28px', fontWeight: 700, color: '#38bdf8' }}>{stats.active_camera_nodes} Online</div>
-        </div>
-      </div>
-
-      {/* Interactive Map Section */}
-      <div style={{ background: '#131b2e', border: '1px solid #1e293b', borderRadius: '14px', overflow: 'hidden', marginBottom: '24px' }}>
-        <div style={{ padding: '14px 20px', borderBottom: '1px solid #1e293b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h2 style={{ fontSize: '15px', fontWeight: 600, margin: 0 }}>Sanctuary Geofenced Perimeter & Real-Time Camera Map</h2>
-          <span style={{ fontSize: '12px', color: '#94a3b8' }}>Leaflet GPS Tracking</span>
-        </div>
-        <div style={{ height: '340px', width: '100%' }}>
-          <MapContainer center={[12.9698, 79.1559]} zoom={14} style={{ height: '100%', width: '100%' }}>
-            <TileLayer
-              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            />
-            {/* Core Sanctuary Geofence Circle */}
-            <Circle
-              center={[12.9700, 79.1550]}
-              radius={800}
-              pathOptions={{ color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.15 }}
-            />
-            {alerts.map((alert) => (
-              <Marker key={alert.id} position={[alert.location.lat, alert.location.lng]}>
-                <Popup>
-                  <div style={{ color: '#0f172a', fontSize: '13px' }}>
-                    <strong>{alert.camera_id}</strong>
-                    <br />
-                    Threat: <span style={{ color: alert.threat_level === 'CRITICAL' ? 'red' : 'green', fontWeight: 'bold' }}>{alert.threat_level}</span>
-                    <br />
-                    Entities: {alert.detections ? alert.detections.map(d => d.label).join(', ') : 'None'}
-                  </div>
-                </Popup>
-              </Marker>
-            ))}
-          </MapContainer>
-        </div>
-      </div>
-
-      {/* Filter Tabs & Incidents Stream */}
-      <div style={{ background: '#131b2e', border: '1px solid #1e293b', borderRadius: '14px', overflow: 'hidden' }}>
-        <div style={{ padding: '16px 20px', borderBottom: '1px solid #1e293b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h2 style={{ fontSize: '16px', fontWeight: 600, margin: 0 }}>Real-Time Camera Ingestion & AI Detection Stream</h2>
-
-          {/* Category Filter Tabs */}
-          <div style={{ display: 'flex', gap: '8px' }}>
-            {['ALL', 'CRITICAL', 'MONITORED'].map((filter) => (
+        {/* 2. CAMERA HUB VIEW (Webcam + Upload Sub-tabs) */}
+        {activeTab === 'camera' && (
+          <div>
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
               <button
-                key={filter}
-                onClick={() => setActiveFilter(filter)}
+                onClick={() => setCameraSubTab('webcam')}
                 style={{
-                  padding: '6px 14px',
-                  borderRadius: '6px',
-                  background: activeFilter === filter ? '#38bdf820' : '#1e293b',
-                  border: `1px solid ${activeFilter === filter ? '#38bdf8' : '#334155'}`,
-                  color: activeFilter === filter ? '#38bdf8' : '#94a3b8',
-                  fontSize: '12px',
+                  padding: '8px 16px',
+                  borderRadius: '8px',
+                  background: cameraSubTab === 'webcam' ? '#38bdf820' : '#111827',
+                  border: `1px solid ${cameraSubTab === 'webcam' ? '#38bdf8' : '#1f2937'}`,
+                  color: cameraSubTab === 'webcam' ? '#38bdf8' : '#9ca3af',
                   fontWeight: 600,
                   cursor: 'pointer'
                 }}
               >
-                {filter === 'ALL' ? 'All Feeds' : filter}
+                Laptop Webcam (Live AI Edge)
               </button>
-            ))}
-          </div>
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: '20px', padding: '20px' }}>
-          {alerts.length === 0 ? (
-            <div style={{ padding: '40px', textAlign: 'center', color: '#64748b', gridColumn: '1 / -1' }}>
-              No incidents recorded matching this category. Stream simulation or upload media to begin.
+              <button
+                onClick={() => setCameraSubTab('upload')}
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: '8px',
+                  background: cameraSubTab === 'upload' ? '#38bdf820' : '#111827',
+                  border: `1px solid ${cameraSubTab === 'upload' ? '#38bdf8' : '#1f2937'}`,
+                  color: cameraSubTab === 'upload' ? '#38bdf8' : '#9ca3af',
+                  fontWeight: 600,
+                  cursor: 'pointer'
+                }}
+              >
+                Manual Feed & CCTV Footage Upload
+              </button>
             </div>
-          ) : (
-            alerts.map((alert) => {
-              const isCritical = alert.threat_level === 'CRITICAL';
-              return (
-                <div
-                  key={alert.id}
-                  style={{
-                    background: '#0f172a',
-                    border: `1px solid ${isCritical ? '#ef444460' : '#1e293b'}`,
-                    borderRadius: '12px',
-                    overflow: 'hidden',
-                    display: 'flex',
-                    flexDirection: 'column'
-                  }}
-                >
-                  {alert.annotated_image ? (
-                    <img
-                      src={alert.annotated_image}
-                      alt="Annotated Inference Feed"
-                      style={{ width: '100%', height: '220px', objectFit: 'cover' }}
+
+            {cameraSubTab === 'webcam' && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '20px' }}>
+                <div style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: '12px', padding: '16px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                    <span style={{ fontWeight: 600 }}>Webcam Sensor Ingestion Feed</span>
+                    <button
+                      onClick={() => setIsWebcamStreaming(!isWebcamStreaming)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '6px 14px',
+                        borderRadius: '6px',
+                        background: isWebcamStreaming ? '#ef4444' : '#22c55e',
+                        color: '#fff',
+                        border: 'none',
+                        cursor: 'pointer',
+                        fontWeight: 600
+                      }}
+                    >
+                      {isWebcamStreaming ? <><Square size={14} /> Stop Feed</> : <><Play size={14} /> Start Live AI</>}
+                    </button>
+                  </div>
+                  <div style={{ borderRadius: '8px', overflow: 'hidden', background: '#000', height: '360px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Webcam
+                      ref={webcamRef}
+                      screenshotFormat="image/jpeg"
+                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      videoConstraints={{ facingMode: "user" }}
                     />
-                  ) : (
-                    <div style={{ height: '140px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#1e293b20', color: '#64748b', fontSize: '13px' }}>
-                      Telemetry / LoRaWAN Data Packet (No Frame)
-                    </div>
-                  )}
-
-                  <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontWeight: 700, fontSize: '16px' }}>{alert.camera_id}</span>
-                      <span
-                        style={{
-                          fontSize: '11px',
-                          fontWeight: 700,
-                          padding: '2px 8px',
-                          borderRadius: '999px',
-                          background: isCritical ? '#ef444420' : '#22c55e20',
-                          color: isCritical ? '#f87171' : '#4ade80',
-                          border: `1px solid ${isCritical ? '#ef444460' : '#22c55e60'}`
-                        }}
-                      >
-                        {alert.threat_level}
-                      </span>
-                    </div>
-
-                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                      {alert.detections && alert.detections.length > 0 ? (
-                        alert.detections.map((det, i) => (
-                          <span
-                            key={i}
-                            style={{
-                              background: '#1e293b',
-                              borderRadius: '6px',
-                              padding: '3px 8px',
-                              fontSize: '12px',
-                              color: '#e2e8f0'
-                            }}
-                          >
-                            <strong>{det.label.toUpperCase()}</strong> ({Math.round(det.confidence * 100)}%)
-                          </span>
-                        ))
-                      ) : (
-                        <span style={{ color: '#64748b', fontSize: '12px' }}>No targets specified</span>
-                      )}
-                    </div>
-
-                    <div style={{ color: '#64748b', fontSize: '12px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                      <MapPin size={14} /> Lat: {alert.location?.lat?.toFixed(4)}, Lng: {alert.location?.lng?.toFixed(4)}
-                    </div>
                   </div>
                 </div>
-              );
-            })
-          )}
-        </div>
-      </div>
+
+                <div style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: '12px', padding: '16px' }}>
+                  <span style={{ fontWeight: 600, display: 'block', marginBottom: '12px' }}>Live YOLOv8x Inference Output</span>
+                  {webcamDetection && webcamDetection.annotated_image ? (
+                    <div>
+                      <img src={webcamDetection.annotated_image} alt="Annotated Feed" style={{ width: '100%', height: '260px', objectFit: 'cover', borderRadius: '8px' }} />
+                      <div style={{ marginTop: '12px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                        {webcamDetection.detections.map((d, i) => (
+                          <span key={i} style={{ background: '#1f2937', padding: '4px 10px', borderRadius: '6px', fontSize: '13px' }}>
+                            <strong>{d.label.toUpperCase()}</strong> ({Math.round(d.confidence * 100)}%)
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ height: '300px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6b7280' }}>
+                      Click "Start Live AI" to process webcam stream
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {cameraSubTab === 'upload' && (
+              <div style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: '12px', padding: '24px' }}>
+                <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>Upload Test Media / CCTV Footages</h3>
+                <input type="file" accept="image/*" ref={fileInputRef} style={{ display: 'none' }} onChange={(e) => handleFileUpload(e, false)} />
+                <input type="file" accept="video/*" ref={videoInputRef} style={{ display: 'none' }} onChange={(e) => handleFileUpload(e, true)} />
+                <div style={{ display: 'flex', gap: '14px' }}>
+                  <button onClick={() => fileInputRef.current.click()} disabled={uploading} style={{ padding: '10px 18px', background: '#1f2937', border: '1px solid #374151', color: '#fff', borderRadius: '8px', cursor: 'pointer', fontWeight: 600 }}>
+                    {uploading ? 'Processing...' : 'Upload Single Frame Image'}
+                  </button>
+                  <button onClick={() => videoInputRef.current.click()} disabled={uploading} style={{ padding: '10px 18px', background: '#1f2937', border: '1px solid #374151', color: '#fff', borderRadius: '8px', cursor: 'pointer', fontWeight: 600 }}>
+                    {uploading ? 'Processing...' : 'Upload MP4 / CCTV Footage'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 3. THREAT ALERTS VIEW */}
+        {activeTab === 'alert' && (
+          <div style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: '12px', padding: '20px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h2 style={{ fontSize: '16px', fontWeight: 600, margin: 0 }}>Incident Security Log</h2>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                {['ALL', 'CRITICAL', 'HIGH', 'MONITORED'].map(f => (
+                  <button
+                    key={f}
+                    onClick={() => setAlertFilter(f)}
+                    style={{
+                      padding: '4px 10px',
+                      borderRadius: '6px',
+                      background: alertFilter === f ? '#38bdf820' : '#1f2937',
+                      border: `1px solid ${alertFilter === f ? '#38bdf8' : '#374151'}`,
+                      color: alertFilter === f ? '#38bdf8' : '#9ca3af',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {f}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {filteredAlerts.length === 0 ? (
+                <div style={{ padding: '30px', textAlign: 'center', color: '#6b7280' }}>No incident records for this filter.</div>
+              ) : (
+                filteredAlerts.map(a => (
+                  <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#0b0f19', padding: '16px', borderRadius: '8px', border: '1px solid #1f2937' }}>
+                    <div>
+                      <div style={{ fontWeight: 700 }}>{a.camera_id}</div>
+                      <div style={{ color: '#9ca3af', fontSize: '12px', marginTop: '2px' }}>{a.timestamp}</div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                      <span style={{ color: a.threat_level === 'CRITICAL' ? '#ef4444' : '#22c55e', fontWeight: 700 }}>{a.threat_level}</span>
+                      {!a.resolved ? (
+                        <button onClick={() => handleResolveAlert(a.id)} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 12px', borderRadius: '6px', background: '#1f2937', border: '1px solid #374151', color: '#38bdf8', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}>
+                          <CheckCircle2 size={14} /> Resolve
+                        </button>
+                      ) : (
+                        <span style={{ color: '#6b7280', fontSize: '12px' }}>Resolved</span>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* 4. RESERVE MAP VIEW */}
+        {activeTab === 'map' && (
+          <div style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: '12px', overflow: 'hidden', height: '560px' }}>
+            <MapContainer center={[12.9698, 79.1559]} zoom={14} style={{ height: '100%', width: '100%' }}>
+              <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+              <Circle center={[12.9700, 79.1550]} radius={800} pathOptions={{ color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.15 }} />
+              {alerts.map(a => (
+                <Marker key={a.id} position={[a.location?.lat || 12.9698, a.location?.lng || 79.1559]}>
+                  <Popup>{a.camera_id}: {a.threat_level}</Popup>
+                </Marker>
+              ))}
+            </MapContainer>
+          </div>
+        )}
+
+        {/* 5. ANALYTICS VIEW */}
+        {activeTab === 'analytics' && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '20px' }}>
+            <div style={{ background: '#111827', border: '1px solid #1f2937', padding: '20px', borderRadius: '12px' }}>
+              <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>Threat Severity Breakdown</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#ef4444' }}>
+                  <span>Critical Poacher / Intruder Alerts</span>
+                  <strong>{stats.critical_intrusions}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#f59e0b' }}>
+                  <span>High Vehicle Intrusions</span>
+                  <strong>{stats.high_threats}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: '#22c55e' }}>
+                  <span>Monitored Wildlife Sightings</span>
+                  <strong>{stats.wildlife_sightings}</strong>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ background: '#111827', border: '1px solid #1f2937', padding: '20px', borderRadius: '12px' }}>
+              <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>Species Distribution</h3>
+              {analytics && analytics.species_distribution ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {Object.entries(analytics.species_distribution).map(([species, count]) => (
+                    <div key={species} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+                      <span style={{ textTransform: 'capitalize' }}>{species}</span>
+                      <strong>{count}</strong>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ color: '#6b7280' }}>No species telemetry logged yet.</div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* 6. CAMERA NETWORK VIEW */}
+        {activeTab === 'cameras' && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
+            {cameras.map((cam) => (
+              <div key={cam.id} style={{ background: '#111827', border: '1px solid #1f2937', padding: '18px', borderRadius: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontWeight: 700 }}>{cam.id}</span>
+                  <span style={{ color: cam.status === 'ONLINE' ? '#22c55e' : '#ef4444', fontSize: '12px', fontWeight: 600 }}>● {cam.status}</span>
+                </div>
+                <div style={{ color: '#9ca3af', fontSize: '13px', marginTop: '4px' }}>{cam.name}</div>
+                <div style={{ display: 'flex', gap: '16px', marginTop: '14px', fontSize: '12px', color: '#d1d5db' }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><Battery size={14} /> {cam.battery_pct}%</span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><Wifi size={14} /> {cam.signal_dbm || -70} dBm</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* 7. SETTINGS VIEW */}
+        {activeTab === 'settings' && (
+          <div style={{ background: '#111827', border: '1px solid #1f2937', padding: '24px', borderRadius: '12px', maxWidth: '600px' }}>
+            <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '20px' }}>AI Model & Sanctuary Parameters</h3>
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', color: '#9ca3af', marginBottom: '8px' }}>
+                <span>YOLOv8x Confidence Threshold</span>
+                <strong>{confThreshold}</strong>
+              </label>
+              <input
+                type="range"
+                min="0.1"
+                max="0.9"
+                step="0.05"
+                value={confThreshold}
+                onChange={(e) => handleSettingsUpdate(e.target.value)}
+                style={{ width: '100%' }}
+              />
+            </div>
+          </div>
+        )}
+
+      </main>
     </div>
   );
 }
