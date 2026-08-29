@@ -20,6 +20,7 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException, WebSocket, W
 from fastapi.middleware.cors import CORSMiddleware
 from ultralytics import YOLO
 from PIL import Image
+from PIL.ExifTags import TAGS, GPSTAGS
 import numpy as np
 import uvicorn
 
@@ -59,7 +60,7 @@ def get_db():
         db.close()
 
 # --- FASTAPI APP SETUP ---
-app = FastAPI(title="Wildlife Sentinel Enterprise API", version="3.2.0")
+app = FastAPI(title="Wildlife Sentinel Enterprise API", version="3.4.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -91,7 +92,7 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-# Load YOLOv8 model
+# Load YOLOv8 Model
 model = YOLO("yolov8x.pt")
 
 THREAT_CLASSES = {"person", "car", "truck", "motorcycle", "bus"}
@@ -116,6 +117,53 @@ camera_nodes_db = [
     {"id": "CAM_EAST_CORRIDOR", "name": "East Migration Path", "location": {"lat": 12.9698, "lng": 79.1660}, "status": "ONLINE", "battery_pct": 78, "signal_dbm": -64},
     {"id": "CAM_WEST_BUFFER", "name": "West Perimeter Fence", "location": {"lat": 12.9620, "lng": 79.1480}, "status": "OFFLINE", "battery_pct": 14, "signal_dbm": -95}
 ]
+
+# --- EXIF GPS EXTRACTION UTILITIES ---
+def convert_to_degrees(value):
+    """Converts EXIF DMS (degrees, minutes, seconds) to decimal degrees."""
+    try:
+        d = float(value[0])
+        m = float(value[1])
+        s = float(value[2])
+        return d + (m / 60.0) + (s / 3600.0)
+    except Exception:
+        return None
+
+def extract_exif_gps(image_bytes: bytes):
+    """Extracts latitude and longitude from image EXIF metadata if available."""
+    try:
+        pil_img = Image.open(io.BytesIO(image_bytes))
+        exif_data = pil_img._getexif()
+        if not exif_data:
+            return None, None
+
+        gps_info = {}
+        for tag_id, value in exif_data.items():
+            tag_name = TAGS.get(tag_id, tag_id)
+            if tag_name == "GPSInfo":
+                for sub_key, sub_val in value.items():
+                    sub_tag = GPSTAGS.get(sub_key, sub_key)
+                    gps_info[sub_tag] = sub_val
+
+        lat_val = gps_info.get("GPSLatitude")
+        lat_ref = gps_info.get("GPSLatitudeRef")
+        lng_val = gps_info.get("GPSLongitude")
+        lng_ref = gps_info.get("GPSLongitudeRef")
+
+        if lat_val and lat_ref and lng_val and lng_ref:
+            lat = convert_to_degrees(lat_val)
+            lng = convert_to_degrees(lng_val)
+
+            if lat is not None and lng is not None:
+                if lat_ref.upper() != "N":
+                    lat = -lat
+                if lng_ref.upper() != "E":
+                    lng = -lng
+                return round(lat, 6), round(lng, 6)
+    except Exception:
+        pass
+
+    return None, None
 
 # --- IMAGE PROCESSING UTILITIES ---
 def enhance_low_light_image(img_bgr: np.ndarray) -> np.ndarray:
@@ -164,6 +212,12 @@ async def detect_feed(
 ):
     try:
         image_bytes = await image.read()
+
+        # Extract embedded EXIF GPS coordinates if present
+        exif_lat, exif_lng = extract_exif_gps(image_bytes)
+        final_lat = exif_lat if exif_lat is not None else latitude
+        final_lng = exif_lng if exif_lng is not None else longitude
+
         pil_img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
         img_np = np.array(pil_img)
 
@@ -199,8 +253,8 @@ async def detect_feed(
             id=alert_id,
             camera_id=camera_id,
             timestamp=datetime.datetime.utcnow(),
-            latitude=latitude,
-            longitude=longitude,
+            latitude=final_lat,
+            longitude=final_lng,
             threat_level=threat_level,
             detections=json.dumps(detections),
             resolved=False,
@@ -213,7 +267,7 @@ async def detect_feed(
             "id": alert_id,
             "camera_id": camera_id,
             "timestamp": new_alert.timestamp.isoformat() + "Z",
-            "location": {"lat": latitude, "lng": longitude},
+            "location": {"lat": final_lat, "lng": final_lng},
             "detections": detections,
             "threat_level": threat_level,
             "resolved": False,
@@ -223,7 +277,7 @@ async def detect_feed(
         await manager.broadcast({"type": "NEW_ALERT", "data": payload})
 
         if threat_level in ["CRITICAL", "HIGH"]:
-            send_critical_alert(camera_id, threat_level, detections, {"lat": latitude, "lng": longitude})
+            send_critical_alert(camera_id, threat_level, detections, {"lat": final_lat, "lng": final_lng})
 
         return payload
 
@@ -385,7 +439,6 @@ async def detect_audio(
             except Exception:
                 pass
 
-# --- EDGE / LoRa TELEMETRY ---
 class LoRaTelemetryPayload(BaseModel):
     camera_id: str
     latitude: float
@@ -428,7 +481,6 @@ async def receive_lora_telemetry(payload: LoRaTelemetryPayload, db: Session = De
     await manager.broadcast({"type": "NEW_ALERT", "data": alert_data})
     return {"status": "received", "alert_id": alert_id}
 
-# --- STATS, ALERTS & ANALYTICS ---
 @app.get("/health")
 def health_check():
     return {"status": "ok", "service": "wildlife-sentinel-backend", "model": "yolov8x.pt"}
@@ -528,18 +580,47 @@ def get_analytics(db: Session = Depends(get_db)):
     records = db.query(AlertRecord).all()
     species_breakdown = {}
     threat_breakdown = {"CRITICAL": 0, "HIGH": 0, "MONITORED": 0, "LOW": 0}
+    modality_breakdown = {"Vision Stream": 0, "Acoustic Sensor": 0, "LoRa Mesh": 0}
+    hourly_distribution = [0] * 24
+    hotspot_breakdown = {}
 
     for r in records:
         threat = r.threat_level or "LOW"
         threat_breakdown[threat] = threat_breakdown.get(threat, 0) + 1
+        
+        # Ingestion modality check
+        if r.camera_id.startswith("ACOUSTIC") or "[Audio]" in (r.detections or ""):
+            modality_breakdown["Acoustic Sensor"] += 1
+        elif r.camera_id.startswith("lora_") or "LoRa" in (r.camera_id or ""):
+            modality_breakdown["LoRa Mesh"] += 1
+        else:
+            modality_breakdown["Vision Stream"] += 1
+
+        # Hotspot sector check
+        clean_cam = r.camera_id.split(" [")[0]
+        hotspot_breakdown[clean_cam] = hotspot_breakdown.get(clean_cam, 0) + 1
+
+        # Hourly bucket
+        if r.timestamp:
+            hourly_distribution[r.timestamp.hour] += 1
+
         dets = json.loads(r.detections) if r.detections else []
         for det in dets:
             label = det.get("label", "unknown")
-            species_breakdown[label] = species_breakdown.get(label, 0) + 1
+            clean_label = label.replace("[Audio] ", "").capitalize()
+            species_breakdown[clean_label] = species_breakdown.get(clean_label, 0) + 1
+
+    hourly_trend = [
+        {"hour": f"{h:02d}:00", "intrusions": hourly_distribution[h]}
+        for h in range(24)
+    ]
 
     return {
         "species_distribution": species_breakdown,
         "threat_severity_distribution": threat_breakdown,
+        "modality_distribution": modality_breakdown,
+        "hourly_trend": hourly_trend,
+        "hotspot_distribution": hotspot_breakdown,
         "total_detections_logged": len(records),
         "most_frequent_target": max(species_breakdown, key=species_breakdown.get) if species_breakdown else "None"
     }
