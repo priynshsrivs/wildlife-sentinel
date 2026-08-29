@@ -1,4 +1,11 @@
 import os
+import sys
+
+# Ensure project root directory is in sys.path
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 import io
 import cv2
 import json
@@ -21,7 +28,8 @@ from sqlalchemy import create_engine, Column, String, Float, Boolean, DateTime, 
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 
-from dispatch import send_critical_alert
+from backend.dispatch import send_critical_alert
+from ai_service.audio.classifier import predict_audio_threat
 
 # --- DATABASE CONFIGURATION (SQLite Persistence) ---
 DATABASE_URL = "sqlite:///./wildlife_sentinel.db"
@@ -51,7 +59,7 @@ def get_db():
         db.close()
 
 # --- FASTAPI APP SETUP ---
-app = FastAPI(title="Wildlife Sentinel Enterprise API", version="3.1.0")
+app = FastAPI(title="Wildlife Sentinel Enterprise API", version="3.2.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -83,7 +91,7 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-# Load YOLOv8 high-accuracy model
+# Load YOLOv8 model
 model = YOLO("yolov8x.pt")
 
 THREAT_CLASSES = {"person", "car", "truck", "motorcycle", "bus"}
@@ -103,15 +111,14 @@ system_settings = {
 }
 
 camera_nodes_db = [
-    {"id": "CAM_NORTH_01", "name": "North Ridge Outpost", "location": {"lat": 12.9735, "lng": 79.1585}, "status": "ONLINE", "battery_pct": 92},
-    {"id": "CAM_SOUTH_02", "name": "South River Crossing", "location": {"lat": 12.9642, "lng": 79.1512}, "status": "ONLINE", "battery_pct": 84},
-    {"id": "CAM_EAST_CORRIDOR", "name": "East Wildlife Migration Path", "location": {"lat": 12.9698, "lng": 79.1660}, "status": "ONLINE", "battery_pct": 78},
-    {"id": "CAM_WEST_BUFFER", "name": "West Perimeter Fence", "location": {"lat": 12.9620, "lng": 79.1480}, "status": "OFFLINE", "battery_pct": 14}
+    {"id": "CAM_NORTH_01", "name": "North Ridge Outpost", "location": {"lat": 12.9735, "lng": 79.1585}, "status": "ONLINE", "battery_pct": 92, "signal_dbm": -68},
+    {"id": "CAM_SOUTH_02", "name": "South River Crossing", "location": {"lat": 12.9642, "lng": 79.1512}, "status": "ONLINE", "battery_pct": 84, "signal_dbm": -72},
+    {"id": "CAM_EAST_CORRIDOR", "name": "East Migration Path", "location": {"lat": 12.9698, "lng": 79.1660}, "status": "ONLINE", "battery_pct": 78, "signal_dbm": -64},
+    {"id": "CAM_WEST_BUFFER", "name": "West Perimeter Fence", "location": {"lat": 12.9620, "lng": 79.1480}, "status": "OFFLINE", "battery_pct": 14, "signal_dbm": -95}
 ]
 
 # --- IMAGE PROCESSING UTILITIES ---
 def enhance_low_light_image(img_bgr: np.ndarray) -> np.ndarray:
-    """Applies CLAHE contrast enhancement for night-vision and low-light feeds."""
     lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
     clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
@@ -232,7 +239,6 @@ async def detect_video(
     sample_rate: int = Form(1),
     db: Session = Depends(get_db)
 ):
-    """Processes uploaded video footage, samples frames, and broadcasts detected incidents."""
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
         shutil.copyfileobj(video.file, tmp)
         tmp_path = tmp.name
@@ -310,10 +316,11 @@ async def detect_video(
         frame_count += 1
         
     cap.release()
-    try:
-        os.remove(tmp_path)
-    except Exception:
-        pass
+    if os.path.exists(tmp_path):
+        try:
+            os.remove(tmp_path)
+        except Exception:
+            pass
     
     return {
         "status": "success",
@@ -322,7 +329,63 @@ async def detect_video(
         "incidents": video_summary
     }
 
-# --- EDGE / LoRaWAN ENDPOINT ---
+@app.post("/api/detect/audio")
+async def detect_audio(
+    audio: UploadFile = File(...),
+    camera_id: str = Form("ACOUSTIC_SENSOR_01"),
+    latitude: float = Form(12.9698),
+    longitude: float = Form(79.1559),
+    db: Session = Depends(get_db)
+):
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+        shutil.copyfileobj(audio.file, tmp)
+        tmp_path = tmp.name
+
+    try:
+        threat_label, confidence, threat_level = predict_audio_threat(tmp_path)
+        detections = [{"label": f"[Audio] {threat_label}", "confidence": round(confidence, 3), "bbox": [0, 0, 0, 0]}]
+        alert_id = f"audio_{int(datetime.datetime.utcnow().timestamp() * 1000)}"
+
+        record = AlertRecord(
+            id=alert_id,
+            camera_id=camera_id,
+            timestamp=datetime.datetime.utcnow(),
+            latitude=latitude,
+            longitude=longitude,
+            threat_level=threat_level,
+            detections=json.dumps(detections),
+            resolved=False,
+            annotated_image=None
+        )
+        db.add(record)
+        db.commit()
+
+        payload = {
+            "id": alert_id,
+            "camera_id": camera_id,
+            "timestamp": record.timestamp.isoformat() + "Z",
+            "location": {"lat": latitude, "lng": longitude},
+            "detections": detections,
+            "threat_level": threat_level,
+            "resolved": False,
+            "annotated_image": None,
+            "source": "Acoustic Sensor Node"
+        }
+
+        await manager.broadcast({"type": "NEW_ALERT", "data": payload})
+
+        if threat_level in ["CRITICAL", "HIGH"]:
+            send_critical_alert(camera_id, threat_level, detections, {"lat": latitude, "lng": longitude})
+
+        return payload
+    finally:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+
+# --- EDGE / LoRa TELEMETRY ---
 class LoRaTelemetryPayload(BaseModel):
     camera_id: str
     latitude: float
@@ -365,7 +428,7 @@ async def receive_lora_telemetry(payload: LoRaTelemetryPayload, db: Session = De
     await manager.broadcast({"type": "NEW_ALERT", "data": alert_data})
     return {"status": "received", "alert_id": alert_id}
 
-# --- DASHBOARD & ANALYTICS DATA ---
+# --- STATS, ALERTS & ANALYTICS ---
 @app.get("/health")
 def health_check():
     return {"status": "ok", "service": "wildlife-sentinel-backend", "model": "yolov8x.pt"}
@@ -396,7 +459,7 @@ def get_alerts(db: Session = Depends(get_db)):
             "camera_id": r.camera_id,
             "timestamp": r.timestamp.isoformat() + "Z",
             "location": {"lat": r.latitude, "lng": r.longitude},
-            "detections": json.loads(r.detections),
+            "detections": json.loads(r.detections) if r.detections else [],
             "threat_level": r.threat_level,
             "resolved": r.resolved,
             "annotated_image": r.annotated_image
@@ -421,7 +484,7 @@ def filter_alerts(threat_level: Optional[str] = None, camera_id: Optional[str] =
             "camera_id": r.camera_id,
             "timestamp": r.timestamp.isoformat() + "Z",
             "location": {"lat": r.latitude, "lng": r.longitude},
-            "detections": json.loads(r.detections),
+            "detections": json.loads(r.detections) if r.detections else [],
             "threat_level": r.threat_level,
             "resolved": r.resolved,
             "annotated_image": r.annotated_image

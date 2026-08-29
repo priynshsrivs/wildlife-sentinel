@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Webcam from 'react-webcam';
+import 'leaflet/dist/leaflet.css';
 import { 
   LayoutDashboard, 
   Camera as CameraIcon, 
@@ -9,23 +10,18 @@ import {
   Video, 
   Settings as SettingsIcon,
   ShieldAlert,
-  Radio,
   RefreshCw,
-  MapPin,
-  UploadCloud,
   Trash2,
   Play,
   Square,
   CheckCircle2,
-  Sliders,
   Battery,
   Wifi,
-  Activity
+  Volume2
 } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Circle } from 'react-leaflet';
 import L from 'leaflet';
 
-// Leaflet default icon fix
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
@@ -48,32 +44,42 @@ export default function App() {
   });
   const [analytics, setAnalytics] = useState(null);
   const [cameras, setCameras] = useState([]);
-  const [cameraSubTab, setCameraSubTab] = useState('webcam'); // 'webcam' | 'upload'
+  const [cameraSubTab, setCameraSubTab] = useState('webcam');
   const [alertFilter, setAlertFilter] = useState('ALL');
   const [isWebcamStreaming, setIsWebcamStreaming] = useState(false);
   const [webcamDetection, setWebcamDetection] = useState(null);
   const [wsConnected, setWsConnected] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [confThreshold, setConfThreshold] = useState(0.45);
+  const [geofenceRadius, setGeofenceRadius] = useState(800);
+  const [discordWebhook, setDiscordWebhook] = useState('');
 
   const webcamRef = useRef(null);
   const fileInputRef = useRef(null);
   const videoInputRef = useRef(null);
+  const audioInputRef = useRef(null);
 
   const fetchAllData = async () => {
     try {
-      const [alertsRes, statsRes, analyticsRes, camerasRes] = await Promise.all([
+      const [alertsRes, statsRes, analyticsRes, camerasRes, settingsRes] = await Promise.all([
         fetch(`${API_BASE}/alerts`),
         fetch(`${API_BASE}/stats`),
         fetch(`${API_BASE}/analytics`),
-        fetch(`${API_BASE}/cameras`)
+        fetch(`${API_BASE}/cameras`),
+        fetch(`${API_BASE}/settings`)
       ]);
       if (alertsRes.ok) setAlerts(await alertsRes.json());
       if (statsRes.ok) setStats(await statsRes.json());
       if (analyticsRes.ok) setAnalytics(await analyticsRes.json());
       if (camerasRes.ok) setCameras(await camerasRes.json());
+      if (settingsRes.ok) {
+        const s = await settingsRes.json();
+        setConfThreshold(s.confidence_threshold || 0.45);
+        setGeofenceRadius(s.geofence_core_radius_m || 800);
+        setDiscordWebhook(s.discord_webhook_url || '');
+      }
     } catch (err) {
-      console.error("Data synchronization error:", err);
+      console.error("Data fetch error:", err);
     }
   };
 
@@ -96,7 +102,6 @@ export default function App() {
     return () => socket.close();
   }, []);
 
-  // Frame Capture for Laptop Camera Inference
   const captureAndDetect = useCallback(async () => {
     if (!webcamRef.current || !isWebcamStreaming) return;
     const imageSrc = webcamRef.current.getScreenshot();
@@ -132,19 +137,19 @@ export default function App() {
     return () => clearInterval(interval);
   }, [isWebcamStreaming, captureAndDetect]);
 
-  const handleFileUpload = async (e, isVideo = false) => {
+  const handleFileUpload = async (e, type = 'image') => {
     const file = e.target.files[0];
     if (!file) return;
 
     const formData = new FormData();
-    formData.append(isVideo ? 'video' : 'image', file);
-    formData.append('camera_id', isVideo ? 'CAM_VIDEO_CCTV' : 'CAM_MANUAL_FEED');
+    formData.append(type, file);
+    formData.append('camera_id', type === 'video' ? 'CAM_VIDEO_CCTV' : type === 'audio' ? 'ACOUSTIC_EDGE_SENSOR_01' : 'CAM_MANUAL_FEED');
     formData.append('latitude', 12.9698);
     formData.append('longitude', 79.1559);
 
     setUploading(true);
     try {
-      const endpoint = isVideo ? `${API_BASE}/detect/video` : `${API_BASE}/detect`;
+      const endpoint = type === 'video' ? `${API_BASE}/detect/video` : type === 'audio' ? `${API_BASE}/detect/audio` : `${API_BASE}/detect`;
       await fetch(endpoint, { method: 'POST', body: formData });
       fetchAllData();
     } catch (err) {
@@ -174,14 +179,14 @@ export default function App() {
     }
   };
 
-  const handleSettingsUpdate = async (val) => {
-    setConfThreshold(val);
+  const handleSettingsUpdate = async (updates) => {
     try {
       await fetch(`${API_BASE}/settings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confidence_threshold: parseFloat(val) })
+        body: JSON.stringify(updates)
       });
+      fetchAllData();
     } catch (err) {
       console.error(err);
     }
@@ -195,7 +200,7 @@ export default function App() {
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: '#090d16', color: '#f8fafc', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
       
-      {/* Sidebar Navigation */}
+      {/* Sidebar */}
       <aside style={{ width: '260px', background: '#0d1322', borderRight: '1px solid #1e293b', padding: '24px 16px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '0 8px 24px 8px', borderBottom: '1px solid #1e293b' }}>
           <div style={{ background: '#22c55e20', padding: '8px', borderRadius: '10px', border: '1px solid #22c55e40' }}>
@@ -232,8 +237,7 @@ export default function App() {
                 fontWeight: 600,
                 fontSize: '14px',
                 cursor: 'pointer',
-                textAlign: 'left',
-                transition: 'all 0.15s ease'
+                textAlign: 'left'
               }}
             >
               {item.icon} {item.label}
@@ -242,29 +246,28 @@ export default function App() {
         </nav>
       </aside>
 
-      {/* Main Content Area */}
+      {/* Main Area */}
       <main style={{ flex: 1, padding: '32px', overflowY: 'auto' }}>
         
-        {/* Header Strip */}
         <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '28px' }}>
           <div>
             <h1 style={{ fontSize: '24px', fontWeight: 700, margin: 0, textTransform: 'capitalize' }}>{activeTab} Overview</h1>
-            <p style={{ color: '#94a3b8', fontSize: '13px', margin: '4px 0 0 0' }}>Real-time Edge Ingestion & Automated Geofenced Dispatch</p>
+            <p style={{ color: '#94a3b8', fontSize: '13px', margin: '4px 0 0 0' }}>Multimodal Edge Ingestion, Vision & Acoustic AI Surveillance</p>
           </div>
           <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
             <span style={{ fontSize: '12px', padding: '6px 12px', borderRadius: '999px', background: wsConnected ? '#15803d20' : '#7f1d1d20', color: wsConnected ? '#4ade80' : '#f87171', border: `1px solid ${wsConnected ? '#22c55e' : '#ef4444'}` }}>
               {wsConnected ? '● WebSocket Live' : '○ Offline'}
             </span>
-            <button onClick={fetchAllData} title="Refresh Data" style={{ padding: '8px 12px', borderRadius: '8px', background: '#131b2e', border: '1px solid #1e293b', color: '#f8fafc', cursor: 'pointer' }}>
+            <button onClick={fetchAllData} title="Refresh" style={{ padding: '8px 12px', borderRadius: '8px', background: '#111827', border: '1px solid #1f2937', color: '#f8fafc', cursor: 'pointer' }}>
               <RefreshCw size={16} />
             </button>
-            <button onClick={handleClearAlerts} title="Reset Logs" style={{ padding: '8px 12px', borderRadius: '8px', background: '#2a1215', border: '1px solid #7f1d1d', color: '#f87171', cursor: 'pointer' }}>
+            <button onClick={handleClearAlerts} title="Reset Logs" style={{ padding: '8px 12px', borderRadius: '8px', background: '#271216', border: '1px solid #7f1d1d', color: '#f87171', cursor: 'pointer' }}>
               <Trash2 size={16} />
             </button>
           </div>
         </header>
 
-        {/* 1. DASHBOARD VIEW */}
+        {/* 1. DASHBOARD */}
         {activeTab === 'dashboard' && (
           <div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '24px' }}>
@@ -286,24 +289,34 @@ export default function App() {
               </div>
             </div>
 
-            {/* Recent Camera Feed Stream */}
             <div style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: '14px', padding: '20px' }}>
               <h2 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>Live Sanctuary Feed Stream</h2>
               {alerts.length === 0 ? (
-                <div style={{ padding: '40px', textAlign: 'center', color: '#6b7280' }}>No incidents recorded. Start webcam or upload sample footage.</div>
+                <div style={{ padding: '40px', textAlign: 'center', color: '#6b7280' }}>No incidents recorded. Start webcam or upload media samples.</div>
               ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '16px' }}>
-                  {alerts.slice(0, 4).map(alert => (
+                  {alerts.slice(0, 6).map(alert => (
                     <div key={alert.id} style={{ background: '#0b0f19', border: '1px solid #1f2937', borderRadius: '10px', overflow: 'hidden' }}>
                       {alert.annotated_image ? (
                         <img src={alert.annotated_image} alt="Feed Capture" style={{ width: '100%', height: '180px', objectFit: 'cover' }} />
                       ) : (
-                        <div style={{ height: '120px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6b7280', fontSize: '12px' }}>LoRaWAN Telemetry Packet</div>
+                        <div style={{ height: '140px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', gap: '8px', background: '#0f172a' }}>
+                          <Volume2 size={28} color="#38bdf8" />
+                          <span style={{ fontSize: '12px' }}>Acoustic Sensor / Audio Telemetry</span>
+                        </div>
                       )}
                       <div style={{ padding: '12px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600 }}>
                           <span>{alert.camera_id}</span>
-                          <span style={{ color: alert.threat_level === 'CRITICAL' ? '#ef4444' : '#22c55e', fontSize: '12px' }}>{alert.threat_level}</span>
+                          <span style={{ color: alert.threat_level === 'CRITICAL' ? '#ef4444' : alert.threat_level === 'HIGH' ? '#f59e0b' : '#22c55e', fontSize: '12px' }}>{alert.threat_level}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
+                          <span style={{ fontSize: '11px', color: '#64748b' }}>{new Date(alert.timestamp).toLocaleTimeString()}</span>
+                          {!alert.resolved && (
+                            <button onClick={() => handleResolveAlert(alert.id)} style={{ padding: '3px 8px', borderRadius: '4px', background: '#1e293b', border: '1px solid #334155', color: '#38bdf8', fontSize: '11px', cursor: 'pointer' }}>
+                              Resolve
+                            </button>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -314,7 +327,7 @@ export default function App() {
           </div>
         )}
 
-        {/* 2. CAMERA HUB VIEW (Webcam + Upload Sub-tabs) */}
+        {/* 2. CAMERA HUB */}
         {activeTab === 'camera' && (
           <div>
             <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
@@ -344,7 +357,7 @@ export default function App() {
                   cursor: 'pointer'
                 }}
               >
-                Manual Feed & CCTV Footage Upload
+                Multimodal Media Upload (Image / Video / Audio)
               </button>
             </div>
 
@@ -405,15 +418,20 @@ export default function App() {
 
             {cameraSubTab === 'upload' && (
               <div style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: '12px', padding: '24px' }}>
-                <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>Upload Test Media / CCTV Footages</h3>
-                <input type="file" accept="image/*" ref={fileInputRef} style={{ display: 'none' }} onChange={(e) => handleFileUpload(e, false)} />
-                <input type="file" accept="video/*" ref={videoInputRef} style={{ display: 'none' }} onChange={(e) => handleFileUpload(e, true)} />
-                <div style={{ display: 'flex', gap: '14px' }}>
+                <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>Ingest Test Media & Sensors</h3>
+                <input type="file" accept="image/*" ref={fileInputRef} style={{ display: 'none' }} onChange={(e) => handleFileUpload(e, 'image')} />
+                <input type="file" accept="video/*" ref={videoInputRef} style={{ display: 'none' }} onChange={(e) => handleFileUpload(e, 'video')} />
+                <input type="file" accept="audio/*" ref={audioInputRef} style={{ display: 'none' }} onChange={(e) => handleFileUpload(e, 'audio')} />
+                
+                <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap' }}>
                   <button onClick={() => fileInputRef.current.click()} disabled={uploading} style={{ padding: '10px 18px', background: '#1f2937', border: '1px solid #374151', color: '#fff', borderRadius: '8px', cursor: 'pointer', fontWeight: 600 }}>
                     {uploading ? 'Processing...' : 'Upload Single Frame Image'}
                   </button>
                   <button onClick={() => videoInputRef.current.click()} disabled={uploading} style={{ padding: '10px 18px', background: '#1f2937', border: '1px solid #374151', color: '#fff', borderRadius: '8px', cursor: 'pointer', fontWeight: 600 }}>
                     {uploading ? 'Processing...' : 'Upload MP4 / CCTV Footage'}
+                  </button>
+                  <button onClick={() => audioInputRef.current.click()} disabled={uploading} style={{ padding: '10px 18px', background: '#1f2937', border: '1px solid #374151', color: '#38bdf8', borderRadius: '8px', cursor: 'pointer', fontWeight: 600 }}>
+                    {uploading ? 'Processing...' : 'Upload Audio Sample (.wav / .mp3)'}
                   </button>
                 </div>
               </div>
@@ -421,7 +439,7 @@ export default function App() {
           </div>
         )}
 
-        {/* 3. THREAT ALERTS VIEW */}
+        {/* 3. ALERTS */}
         {activeTab === 'alert' && (
           <div style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: '12px', padding: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
@@ -456,10 +474,17 @@ export default function App() {
                   <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#0b0f19', padding: '16px', borderRadius: '8px', border: '1px solid #1f2937' }}>
                     <div>
                       <div style={{ fontWeight: 700 }}>{a.camera_id}</div>
-                      <div style={{ color: '#9ca3af', fontSize: '12px', marginTop: '2px' }}>{a.timestamp}</div>
+                      <div style={{ color: '#9ca3af', fontSize: '12px', marginTop: '2px' }}>{new Date(a.timestamp).toLocaleString()}</div>
+                      <div style={{ display: 'flex', gap: '6px', marginTop: '6px' }}>
+                        {(a.detections || []).map((d, i) => (
+                          <span key={i} style={{ fontSize: '11px', background: '#1e293b', padding: '2px 6px', borderRadius: '4px' }}>
+                            {d.label} ({Math.round(d.confidence * 100)}%)
+                          </span>
+                        ))}
+                      </div>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                      <span style={{ color: a.threat_level === 'CRITICAL' ? '#ef4444' : '#22c55e', fontWeight: 700 }}>{a.threat_level}</span>
+                      <span style={{ color: a.threat_level === 'CRITICAL' ? '#ef4444' : a.threat_level === 'HIGH' ? '#f59e0b' : '#22c55e', fontWeight: 700 }}>{a.threat_level}</span>
                       {!a.resolved ? (
                         <button onClick={() => handleResolveAlert(a.id)} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 12px', borderRadius: '6px', background: '#1f2937', border: '1px solid #374151', color: '#38bdf8', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}>
                           <CheckCircle2 size={14} /> Resolve
@@ -475,12 +500,12 @@ export default function App() {
           </div>
         )}
 
-        {/* 4. RESERVE MAP VIEW */}
+        {/* 4. MAP */}
         {activeTab === 'map' && (
           <div style={{ background: '#111827', border: '1px solid #1f2937', borderRadius: '12px', overflow: 'hidden', height: '560px' }}>
             <MapContainer center={[12.9698, 79.1559]} zoom={14} style={{ height: '100%', width: '100%' }}>
               <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-              <Circle center={[12.9700, 79.1550]} radius={800} pathOptions={{ color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.15 }} />
+              <Circle center={[12.9700, 79.1550]} radius={geofenceRadius} pathOptions={{ color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.15 }} />
               {alerts.map(a => (
                 <Marker key={a.id} position={[a.location?.lat || 12.9698, a.location?.lng || 79.1559]}>
                   <Popup>{a.camera_id}: {a.threat_level}</Popup>
@@ -490,7 +515,7 @@ export default function App() {
           </div>
         )}
 
-        {/* 5. ANALYTICS VIEW */}
+        {/* 5. ANALYTICS */}
         {activeTab === 'analytics' && (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '20px' }}>
             <div style={{ background: '#111827', border: '1px solid #1f2937', padding: '20px', borderRadius: '12px' }}>
@@ -512,7 +537,7 @@ export default function App() {
             </div>
 
             <div style={{ background: '#111827', border: '1px solid #1f2937', padding: '20px', borderRadius: '12px' }}>
-              <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>Species Distribution</h3>
+              <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>Species & Acoustic Detections</h3>
               {analytics && analytics.species_distribution ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   {Object.entries(analytics.species_distribution).map(([species, count]) => (
@@ -529,7 +554,7 @@ export default function App() {
           </div>
         )}
 
-        {/* 6. CAMERA NETWORK VIEW */}
+        {/* 6. CAMERAS */}
         {activeTab === 'cameras' && (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
             {cameras.map((cam) => (
@@ -548,7 +573,7 @@ export default function App() {
           </div>
         )}
 
-        {/* 7. SETTINGS VIEW */}
+        {/* 7. SETTINGS */}
         {activeTab === 'settings' && (
           <div style={{ background: '#111827', border: '1px solid #1f2937', padding: '24px', borderRadius: '12px', maxWidth: '600px' }}>
             <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '20px' }}>AI Model & Sanctuary Parameters</h3>
@@ -563,8 +588,43 @@ export default function App() {
                 max="0.9"
                 step="0.05"
                 value={confThreshold}
-                onChange={(e) => handleSettingsUpdate(e.target.value)}
+                onChange={(e) => {
+                  setConfThreshold(parseFloat(e.target.value));
+                  handleSettingsUpdate({ confidence_threshold: parseFloat(e.target.value) });
+                }}
                 style={{ width: '100%' }}
+              />
+            </div>
+
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', fontSize: '13px', color: '#9ca3af', marginBottom: '8px' }}>
+                Core Geofence Radius (meters)
+              </label>
+              <input
+                type="number"
+                value={geofenceRadius}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value) || 800;
+                  setGeofenceRadius(val);
+                  handleSettingsUpdate({ geofence_core_radius_m: val });
+                }}
+                style={{ width: '100%', padding: '10px', background: '#0b0f19', border: '1px solid #1f2937', color: '#fff', borderRadius: '6px' }}
+              />
+            </div>
+
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', fontSize: '13px', color: '#9ca3af', marginBottom: '8px' }}>
+                Discord / Emergency Webhook URL
+              </label>
+              <input
+                type="text"
+                value={discordWebhook}
+                placeholder="https://discord.com/api/webhooks/..."
+                onChange={(e) => {
+                  setDiscordWebhook(e.target.value);
+                  handleSettingsUpdate({ discord_webhook_url: e.target.value });
+                }}
+                style={{ width: '100%', padding: '10px', background: '#0b0f19', border: '1px solid #1f2937', color: '#fff', borderRadius: '6px' }}
               />
             </div>
           </div>
