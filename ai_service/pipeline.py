@@ -1,143 +1,111 @@
-import os
+"""
+Wildlife Sentinel — CLI Pipeline Runner
+
+Sends a paired (image + audio) request to the Audio API's /api/audio/pipeline
+endpoint, which orchestrates:
+    IMAGE → YOLO → vision_result
+    WAV   → audio classifier → audio_result
+    → risk_engine → combined_risk
+    → backend telemetry (if HIGH/CRITICAL) → WebSocket → frontend alert
+"""
+
+import json
 import requests
 
-from .audio.classifier import classify_audio
-from .risk_engine import calculate_combined_risk
+PIPELINE_URL = "http://localhost:5001/api/audio/pipeline"
 
-
-BACKEND_URL = "http://localhost:5000/api/detect"
-
-IMAGE_FILE = "ai_service/test_samples/wildlife/test.jpg"
+IMAGE_FILE = "ai_service/test_samples/wildlife/elephant.jpg"
 AUDIO_FILE = "ai_service/audio/test.wav"
 
 
-def run_pipeline():
-
-    print("\n======================================")
-    print("     WILDLIFE SENTINEL AI PIPELINE")
-    print("======================================")
-
-    if not os.path.exists(IMAGE_FILE):
-        print("[ERROR] test.jpg not found")
-        return
-
-    if not os.path.exists(AUDIO_FILE):
-        print("[ERROR] test.wav not found")
-        return
-
-    # AUDIO
-    print("\n[1] ANALYZING AUDIO...")
-
-    audio_result = classify_audio(AUDIO_FILE)
-
-    print("Audio detection :", audio_result["label"])
-    print("Audio risk      :", audio_result["risk_level"])
-
-    # VISION
-    print("\n[2] SENDING IMAGE TO YOLO BACKEND...")
+def run_pipeline(
+    image_path: str = IMAGE_FILE,
+    audio_path: str = AUDIO_FILE,
+    camera_id:  str = "CAM_NORTH_01",
+    latitude:  float = 12.9716,
+    longitude: float = 79.1585
+):
+    print("\n" + "=" * 50)
+    print("   WILDLIFE SENTINEL — FULL AI PIPELINE")
+    print("=" * 50)
+    print(f"  Image  : {image_path}")
+    print(f"  Audio  : {audio_path}")
+    print(f"  Camera : {camera_id}  ({latitude}, {longitude})")
+    print("=" * 50)
 
     try:
-        with open(IMAGE_FILE, "rb") as image:
-
-            files = {
-                "image": (
-                    os.path.basename(IMAGE_FILE),
-                    image,
-                    "image/jpeg"
-                )
-            }
-
-            data = {
-                "camera_id": "CAM_NORTH_01",
-                "latitude": 12.9716,
-                "longitude": 79.1585
-            }
-
+        with open(image_path, "rb") as img_f, open(audio_path, "rb") as aud_f:
             response = requests.post(
-                BACKEND_URL,
-                files=files,
-                data=data,
-                timeout=30
+                PIPELINE_URL,
+                files={
+                    "image": (image_path.split("/")[-1], img_f, "image/jpeg"),
+                    "audio": (audio_path.split("/")[-1], aud_f, "audio/wav"),
+                },
+                data={
+                    "camera_id": camera_id,
+                    "latitude":  str(latitude),
+                    "longitude": str(longitude),
+                },
+                timeout=60
             )
-
-        if response.status_code != 200:
-            print("[ERROR] Backend error:", response.status_code)
-            print(response.text)
-            return
-
-        vision_response = response.json()
-
+    except FileNotFoundError as e:
+        print(f"[ERROR] File not found: {e}")
+        return
     except requests.exceptions.ConnectionError:
-        print("[ERROR] Backend is not running.")
+        print("[ERROR] Audio API is not running.")
+        print("        Start it with:  cd ai_service/audio && python audio_api.py")
         return
 
-    # VISION RESULT
-    detections = vision_response.get("detections", [])
+    if response.status_code != 200:
+        print(f"[ERROR] Pipeline returned HTTP {response.status_code}")
+        print(response.text)
+        return
 
-    vision_risk = vision_response.get(
-        "threat_level",
-        "LOW"
-    )
+    result = response.json()
 
-    if detections:
+    # ── Print Vision Result ────────────────────────────────────
+    print("\n[1] VISION (YOLO)")
+    print(f"    Detection  : {result['vision']['label']}")
+    print(f"    Risk Level : {result['vision']['risk_level']}")
+    if result["vision"]["detections"]:
+        for det in result["vision"]["detections"]:
+            print(f"    └─ {det['label'].upper()} ({int(det['confidence'] * 100)}%)")
 
-        first = detections[0]
+    # ── Print Audio Result ─────────────────────────────────────
+    print("\n[2] AUDIO (Acoustic Classifier)")
+    print(f"    Detection  : {result['audio']['label']}")
+    print(f"    Risk Level : {result['audio']['risk_level']}")
 
-        vision_label = first.get(
-            "class_name",
-            first.get("label", "UNKNOWN")
-        )
-
+    # ── Print Combined Risk ────────────────────────────────────
+    combined = result["combined_risk"]
+    print("\n[3] RISK ENGINE — COMBINED RESULT")
+    print("=" * 50)
+    if combined == "CRITICAL":
+        print("    🚨 CRITICAL — Immediate ranger dispatch required!")
+    elif combined == "HIGH":
+        print("    ⚠️  HIGH RISK — Threat detected")
+    elif combined == "MEDIUM":
+        print("    ⚠️  MEDIUM — Suspicious activity")
+    elif combined == "MONITORED":
+        print("    👁  MONITORED — Wildlife activity logged")
     else:
-        vision_label = "NO_DETECTION"
+        print("    ✓  LOW — Normal environment")
 
-    vision_result = {
-        "label": vision_label,
-        "risk_level": vision_risk
-    }
+    print(f"\n    Combined Risk : {combined}")
+    print(f"    Vision Risk   : {result['risk_breakdown']['vision_risk']}")
+    print(f"    Audio Risk    : {result['risk_breakdown']['audio_risk']}")
 
-    print("Vision detection :", vision_label)
-    print("Vision risk      :", vision_risk)
-
-    # COMBINE
-    print("\n[3] COMBINING AUDIO + VISION...")
-
-    result = calculate_combined_risk(
-        vision_result,
-        audio_result
-    )
-
-    print("\n======================================")
-    print("       FINAL RISK ASSESSMENT")
-    print("======================================")
-
-    print(
-        "Vision :",
-        result["vision_detection"],
-        "(" + result["vision_risk"] + ")"
-    )
-
-    print(
-        "Audio  :",
-        result["audio_detection"],
-        "(" + result["audio_risk"] + ")"
-    )
-
-    print("\nCOMBINED RISK :", result["combined_risk"])
-
-    if result["combined_risk"] == "CRITICAL":
-        print("🚨 CRITICAL ALERT")
-
-    elif result["combined_risk"] == "HIGH":
-        print("⚠️ HIGH RISK ALERT")
-
-    elif result["combined_risk"] == "MEDIUM":
-        print("⚠️ MEDIUM RISK EVENT")
-
+    # ── Dispatch Status ────────────────────────────────────────
+    print("\n[4] DISPATCH")
+    if result["alert_dispatched"]:
+        print(f"    ✅ Alert sent to backend → WebSocket → Frontend")
+        print(f"    Alert ID : {result['alert_id']}")
     else:
-        print("✓ LOW RISK / NORMAL")
+        print(f"    ℹ  No dispatch (risk below HIGH threshold)")
+
+    print("=" * 50 + "\n")
+    return result
 
 
 if __name__ == "__main__":
     run_pipeline()
-    
