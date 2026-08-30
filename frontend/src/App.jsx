@@ -7,6 +7,19 @@ useMemo,
 } from "react";
 
 import rhinoIntro from "./assets/rhino-intro.png";
+import tigerImage from "./assets/tiger.png";
+import poachersImage from "./assets/poachers.png";
+import vehicleImage from "./assets/vehicle.png";
+import trespasserImage from "./assets/trespasser.png";
+
+// Screen backgrounds
+import dashboardBg from "./assets/dashboard-bg.png";
+import cameraHubBg from "./assets/camerahub-bg.png";
+import liveMonitorBg from "./assets/livemonitor-bg.png";
+import threatBg from "./assets/threat-bg.png";
+import mapBg from "./assets/map-bg.png";
+import poachingBg from "./assets/poaching-bg.png";
+import trespasserBg from "./assets/trespasser-bg.png";
 
 import Webcam from "react-webcam";
 import "leaflet/dist/leaflet.css";
@@ -261,8 +274,38 @@ box-sizing: border-box;
   }
 
   .leaflet-container {
-    background: #07100b;
+    background: #d9e2d7;
     font-family: inherit;
+  }
+
+  /* Direct OpenStreetMap tiles — no API key required. */
+  .sentinel-map .leaflet-tile-pane {
+    filter: brightness(.72) saturate(.72) contrast(1.06);
+  }
+
+  .sentinel-map .leaflet-control-zoom {
+    border: 0 !important;
+    box-shadow: 0 8px 24px rgba(0,0,0,.28) !important;
+  }
+
+  .sentinel-map .leaflet-control-zoom a {
+    background: rgba(8,15,11,.94) !important;
+    color: #f8fafc !important;
+    border-color: rgba(255,255,255,.10) !important;
+  }
+
+  .sentinel-map .leaflet-control-zoom a:hover {
+    background: #102019 !important;
+  }
+
+  .sentinel-map .leaflet-control-attribution {
+    background: rgba(3,8,5,.82) !important;
+    color: #94a3b8 !important;
+    backdrop-filter: blur(8px);
+  }
+
+  .sentinel-map .leaflet-control-attribution a {
+    color: #cbd5e1 !important;
   }
 
   .leaflet-popup-content-wrapper,
@@ -347,7 +390,146 @@ box-sizing: border-box;
     flex-shrink: 0;
   }
 
-  @media (max-width: 1100px) {
+  /* Full-bleed threat/animal slider */
+  .threat-slide-inner {
+    position: relative;
+    z-index: 2;
+    min-height: 360px;
+    height: 360px;
+    display: flex;
+    align-items: center;
+    overflow: hidden;
+    border-radius: 15px;
+  }
+
+  .threat-slide-copy {
+    position: relative;
+    z-index: 5;
+    width: min(650px, 68%);
+    max-width: 650px;
+    padding: 34px 34px 78px;
+  }
+
+  .threat-slide-image-wrap {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    height: 100%;
+    border-radius: 15px;
+    overflow: hidden;
+    border: 0;
+    background: #07100b;
+    box-shadow: none;
+    pointer-events: none;
+  }
+
+  .threat-slide-image-wrap::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    background:
+      linear-gradient(
+        90deg,
+        rgba(2, 6, 4, .88) 0%,
+        rgba(2, 6, 4, .66) 28%,
+        rgba(2, 6, 4, .28) 58%,
+        rgba(2, 6, 4, .10) 100%
+      ),
+      linear-gradient(
+        0deg,
+        rgba(2, 6, 4, .74) 0%,
+        rgba(2, 6, 4, .10) 48%,
+        rgba(2, 6, 4, .18) 100%
+      );
+    pointer-events: none;
+  }
+
+  .threat-slide-image-wrap::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    background:
+      radial-gradient(
+        circle at 72% 48%,
+        rgba(255,255,255,.06),
+        transparent 42%
+      ),
+      linear-gradient(
+        135deg,
+        rgba(255,255,255,.04),
+        transparent 28%,
+        transparent 72%,
+        rgba(0,0,0,.16)
+      );
+    pointer-events: none;
+  }
+
+  .threat-slide-image {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: cover;
+    object-position: center center;
+    transform: scale(1.025);
+    filter: saturate(.96) contrast(1.04);
+  }
+
+  .threat-slide-image-badge {
+    position: absolute;
+    right: 22px;
+    top: 20px;
+    z-index: 4;
+    padding: 7px 10px;
+    border-radius: 999px;
+    background: rgba(2,6,4,.54);
+    border: 1px solid rgba(255,255,255,.14);
+    color: #f8fafc;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: .13em;
+    backdrop-filter: blur(10px);
+    box-shadow: 0 10px 30px rgba(0,0,0,.18);
+  }
+
+  .threat-slide-shell {
+    position: relative;
+    min-height: 360px;
+    border-radius: 16px;
+    overflow: hidden;
+    border: 1px solid rgba(255,255,255,.11);
+    background: #07100b;
+    box-shadow:
+      0 22px 65px rgba(0,0,0,.28),
+      inset 0 1px 0 rgba(255,255,255,.045);
+    isolation: isolate;
+  }
+
+  .threat-slide-shell::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    z-index: 8;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.035);
+  }
+
+  .threat-slide-content {
+    position: relative;
+    z-index: 6;
+    min-height: 360px;
+    height: 360px;
+  }
+
+  .threat-slider-container {
+    position: relative;
+    min-height: 360px;
+    margin-bottom: 22px;
+  }
+
+    @media (max-width: 1100px) {
     .desktop-sidebar {
       width: 82px !important;
     }
@@ -359,9 +541,28 @@ box-sizing: border-box;
     .dashboard-grid {
       grid-template-columns: repeat(2, 1fr) !important;
     }
+
+    .threat-slide-inner {
+      min-height: 360px;
+      height: 360px;
+    }
+
+    .threat-slide-copy {
+      width: min(72%, 620px);
+      padding: 30px 30px 76px;
+    }
+
+    .threat-slide-image-badge {
+      right: 18px;
+      top: 17px;
+    }
   }
 
   @media (max-width: 750px) {
+    .threat-slider-container {
+      min-height: 430px;
+    }
+
     .desktop-sidebar {
       display: none !important;
     }
@@ -380,6 +581,28 @@ box-sizing: border-box;
 
     .camera-grid {
       grid-template-columns: 1fr !important;
+    }
+
+    .threat-slide-inner {
+      min-height: 430px;
+      height: 430px;
+    }
+
+    .threat-slide-copy {
+      width: 100%;
+      max-width: 100%;
+      padding: 28px 22px 82px;
+    }
+
+    .threat-slide-content {
+      min-height: 430px;
+      height: 430px;
+    }
+
+    .threat-slide-image-badge {
+      right: 14px;
+      top: 14px;
+      font-size: 8px;
     }
   }
 `}</style>
@@ -2218,24 +2441,44 @@ title: "ANIMAL",
 subtitle: "WILDLIFE DETECTED",
 description:
 "AI identifies and tracks wildlife movement in real time.",
+image: tigerImage,
+backgroundImage: tigerImage,
+imageAlt: "Tiger detected by Sentinel",
+imagePosition: "center center",
+accent: "#4ade80",
 },
 {
 title: "POACHING",
 subtitle: "THREAT DETECTED",
 description:
 "Suspicious activity detected inside a protected zone.",
+image: poachersImage,
+backgroundImage: poachingBg,
+imageAlt: "Poaching threat detected by Sentinel",
+imagePosition: "center center",
+accent: "#ef4444",
 },
 {
 title: "VEHICLE",
 subtitle: "UNAUTHORIZED VEHICLE",
 description:
 "Vehicle movement detected near a restricted boundary.",
+image: vehicleImage,
+backgroundImage: vehicleImage,
+imageAlt: "Unauthorized vehicle detected by Sentinel",
+imagePosition: "center center",
+accent: "#38bdf8",
 },
 {
 title: "TRESPASSER",
 subtitle: "HUMAN INTRUSION",
 description:
 "Human presence detected inside the reserve.",
+image: trespasserImage,
+backgroundImage: trespasserBg,
+imageAlt: "Human intrusion detected by Sentinel",
+imagePosition: "center center",
+accent: "#f59e0b",
 },
 ];
 
@@ -3075,11 +3318,11 @@ return (
   <div
     style={{
       display: "flex",
-      height: "100vh",
       minHeight: "100vh",
+      alignItems: "stretch",
       background: COLORS.bg,
       color: COLORS.text,
-      overflow: "hidden",
+      overflow: "visible",
     }}
   >
     {/* =================================================
@@ -3097,7 +3340,11 @@ return (
         padding: "22px 14px",
         display: "flex",
         flexDirection: "column",
-        overflowY: "auto",
+        position: "sticky",
+        top: 0,
+        height: "100vh",
+        alignSelf: "flex-start",
+        overflow: "visible",
         zIndex: 50,
       }}
     >
@@ -3268,12 +3515,30 @@ return (
       style={{
         flex: 1,
         minWidth: 0,
-        overflowY: "auto",
+        overflow: "visible",
+        overflowX: "clip",
         position: "relative",
         padding:
           "27px clamp(20px, 4vw, 48px)",
         background:
-          "radial-gradient(circle at 50% -20%, rgba(74,222,128,.06), transparent 35%)",
+          `linear-gradient(180deg, rgba(2,6,4,.56) 0%, rgba(2,6,4,.70) 52%, rgba(2,6,4,.86) 100%), url(${
+            activeTab === "dashboard"
+              ? dashboardBg
+              : activeTab === "camera"
+              ? cameraHubBg
+              : activeTab === "monitoring"
+              ? liveMonitorBg
+              : activeTab === "alert"
+              ? threatBg
+              : activeTab === "map"
+              ? mapBg
+              : dashboardBg
+          })`,
+        backgroundSize: "cover",
+        backgroundPosition: "center center",
+        backgroundRepeat: "no-repeat",
+        backgroundAttachment: "fixed",
+        backgroundColor: COLORS.bg,
       }}
     >
       <div
@@ -3630,26 +3895,19 @@ return (
                 />
               </motion.div>
 {/* =====================================================
-    ANIMATED THREAT SLIDER
+     ANIMATED THREAT SLIDER
 ===================================================== */}
 
-<div
-  style={{
-    position: "relative",
-    minHeight: 300,
-    marginBottom: 22,
-    overflow: "hidden",
-  }}
->
+<div className="threat-slider-container">
   <AnimatePresence mode="wait" initial={false}>
     <motion.div
       key={activeSlide}
       initial={{
         opacity: 0,
-        x: direction > 0 ? 100 : -100,
-        scale: 0.86,
-        rotate: direction > 0 ? 5 : -5,
-        filter: "blur(6px)",
+        x: direction > 0 ? 90 : -90,
+        scale: 0.965,
+        rotate: direction > 0 ? 1.5 : -1.5,
+        filter: "blur(5px)",
       }}
       animate={{
         opacity: 1,
@@ -3660,142 +3918,304 @@ return (
       }}
       exit={{
         opacity: 0,
-        x: direction > 0 ? -100 : 100,
-        scale: 0.86,
-        rotate: direction > 0 ? -5 : 5,
-        filter: "blur(6px)",
+        x: direction > 0 ? -90 : 90,
+        scale: 0.975,
+        rotate: direction > 0 ? -1.5 : 1.5,
+        filter: "blur(5px)",
       }}
       transition={{
-        duration: 0.65,
+        duration: 0.72,
         ease: [0.22, 1, 0.36, 1],
       }}
+      style={{
+        position: "relative",
+        width: "100%",
+      }}
     >
-      <div
-        className="glass-panel"
-        style={{
-          minHeight: 300,
-          position: "relative",
-          overflow: "hidden",
-          padding: 30,
-          display: "flex",
-          flexDirection: "column",
-          justifyContent: "center",
-        }}
-      >
-        <div
-          style={{
-            color:
-              activeSlide === 1
-                ? "#ef4444"
-                : activeSlide === 2
-                ? "#38bdf8"
-                : activeSlide === 3
-                ? "#f59e0b"
-                : "#4ade80",
-            fontSize: 10,
-            fontWeight: 800,
-            letterSpacing: ".2em",
-            marginBottom: 12,
-          }}
+      <div className="threat-slide-shell">
+        <motion.div
+          className="threat-slide-content"
+          initial={{ opacity: 0.96 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.35 }}
         >
-          {slides[activeSlide].subtitle}
-        </div>
-
-        <h2
-          style={{
-            margin: 0,
-            fontSize: "clamp(42px, 6vw, 72px)",
-            fontWeight: 800,
-            letterSpacing: "-.05em",
-          }}
-        >
-          {slides[activeSlide].title}
-        </h2>
-
-        <p
-          style={{
-            maxWidth: 520,
-            margin: "14px 0 0",
-            color: COLORS.muted,
-            fontSize: 14,
-            lineHeight: 1.7,
-          }}
-        >
-          {slides[activeSlide].description}
-        </p>
-
-        <div
-          style={{
-            position: "absolute",
-            right: 22,
-            bottom: 22,
-            display: "flex",
-            gap: 8,
-          }}
-        >
-          <GlassButton
-            onClick={() => {
-              setDirection(-1);
-              setActiveSlide(
-                (prev) =>
-                  (prev - 1 + slides.length) %
-                  slides.length
-              );
-            }}
+          <motion.div
+            className="threat-slide-inner"
+            initial={{ opacity: 0.96 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.35 }}
           >
-            ←
-          </GlassButton>
-
-          <GlassButton
-            onClick={() => {
-              setDirection(1);
-              setActiveSlide(
-                (prev) =>
-                  (prev + 1) %
-                  slides.length
-              );
-            }}
-          >
-            →
-          </GlassButton>
-        </div>
-
-        <div
-          style={{
-            position: "absolute",
-            left: 30,
-            bottom: 27,
-            display: "flex",
-            gap: 6,
-          }}
-        >
-          {slides.map((_, index) => (
-            <button
-              key={index}
-              onClick={() => {
-                setDirection(
-                  index > activeSlide ? 1 : -1
-                );
-                setActiveSlide(index);
-              }}
+            <motion.div
+              className="threat-slide-image-wrap"
               style={{
-                width:
-                  index === activeSlide ? 28 : 7,
-                height: 7,
-                padding: 0,
-                border: "none",
-                borderRadius: 999,
-                background:
-                  index === activeSlide
-                    ? "#4ade80"
-                    : "rgba(255,255,255,.18)",
-                cursor: "pointer",
-                transition:
-                  "all .35s ease",
+                backgroundImage: `url(${slides[activeSlide].backgroundImage})`,
+                backgroundSize: "cover",
+                backgroundPosition:
+                  slides[activeSlide].imagePosition || "center center",
+                backgroundRepeat: "no-repeat",
               }}
-            />
-          ))}
-        </div>
+              initial={{
+                scale: 1.08,
+                opacity: 0.72,
+                x: direction > 0 ? 22 : -22,
+              }}
+              animate={{
+                scale: 1.025,
+                opacity: 1,
+                x: 0,
+              }}
+              transition={{
+                duration: 1.0,
+                ease: [0.22, 1, 0.36, 1],
+              }}
+            >
+              <div
+                className="threat-slide-image-badge"
+                style={{
+                  borderColor: `${slides[activeSlide].accent}55`,
+                  color: slides[activeSlide].accent,
+                }}
+              >
+                AI VISION / LIVE
+              </div>
+
+              <img
+                className="threat-slide-image"
+                src={slides[activeSlide].image}
+                alt={
+                  slides[activeSlide].imageAlt ||
+                  slides[activeSlide].title
+                }
+                loading="eager"
+                draggable="false"
+                style={{
+                  objectPosition:
+                    slides[activeSlide].imagePosition ||
+                    "center center",
+                }}
+                onError={(e) => {
+                  console.error(
+                    "Slide image failed to load:",
+                    slides[activeSlide].title,
+                    slides[activeSlide].image
+                  );
+                  e.currentTarget.style.display = "none";
+                }}
+              />
+            </motion.div>
+
+            <motion.div
+              className="threat-slide-copy"
+              initial={{
+                opacity: 0,
+                y: 22,
+                x: direction > 0 ? 18 : -18,
+              }}
+              animate={{
+                opacity: 1,
+                y: 0,
+                x: 0,
+              }}
+              transition={{
+                duration: 0.58,
+                delay: 0.12,
+                ease: [0.22, 1, 0.36, 1],
+              }}
+            >
+              <div
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  color: slides[activeSlide].accent,
+                  fontSize: 10,
+                  fontWeight: 800,
+                  letterSpacing: ".2em",
+                  marginBottom: 13,
+                  textShadow:
+                    "0 2px 14px rgba(0,0,0,.55)",
+                }}
+              >
+                <span
+                  style={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: "50%",
+                    background: slides[activeSlide].accent,
+                    boxShadow:
+                      `0 0 12px ${slides[activeSlide].accent}`,
+                  }}
+                />
+                {slides[activeSlide].subtitle}
+              </div>
+
+              <h2
+                style={{
+                  margin: 0,
+                  color: "#fff",
+                  fontSize: "clamp(40px, 6vw, 72px)",
+                  lineHeight: 0.94,
+                  fontWeight: 850,
+                  letterSpacing: "-.055em",
+                  textShadow:
+                    "0 5px 28px rgba(0,0,0,.55)",
+                }}
+              >
+                {slides[activeSlide].title}
+              </h2>
+
+              <p
+                style={{
+                  maxWidth: 500,
+                  margin: "15px 0 0",
+                  color: "rgba(248,250,252,.86)",
+                  fontSize: 14,
+                  lineHeight: 1.7,
+                  textShadow:
+                    "0 2px 18px rgba(0,0,0,.72)",
+                }}
+              >
+                {slides[activeSlide].description}
+              </p>
+
+              <div
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                  marginTop: 20,
+                  padding: "8px 11px",
+                  borderRadius: 999,
+                  background: "rgba(2,6,4,.46)",
+                  border:
+                    "1px solid rgba(255,255,255,.13)",
+                  color: "#f8fafc",
+                  fontSize: 9,
+                  fontWeight: 800,
+                  letterSpacing: ".12em",
+                  backdropFilter: "blur(10px)",
+                  boxShadow:
+                    "0 10px 28px rgba(0,0,0,.18)",
+                }}
+              >
+                <Eye
+                  size={13}
+                  color={slides[activeSlide].accent}
+                />
+                REAL-TIME CLASSIFICATION
+              </div>
+            </motion.div>
+          </motion.div>
+
+          <div
+            style={{
+              position: "absolute",
+              left: 30,
+              right: 22,
+              bottom: 21,
+              zIndex: 10,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 14,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              {slides.map((slide, index) => (
+                <button
+                  key={index}
+                  aria-label={`Go to ${slide.title} slide`}
+                  onClick={() => {
+                    if (index === activeSlide) return;
+                    setDirection(
+                      index > activeSlide ? 1 : -1
+                    );
+                    setActiveSlide(index);
+                  }}
+                  style={{
+                    width:
+                      index === activeSlide ? 30 : 8,
+                    height: 7,
+                    padding: 0,
+                    border: "none",
+                    borderRadius: 999,
+                    background:
+                      index === activeSlide
+                        ? slide.accent
+                        : "rgba(255,255,255,.32)",
+                    boxShadow:
+                      index === activeSlide
+                        ? `0 0 14px ${slide.accent}66`
+                        : "none",
+                    cursor: "pointer",
+                    transition:
+                      "all .35s cubic-bezier(.22,1,.36,1)",
+                  }}
+                />
+              ))}
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                gap: 8,
+              }}
+            >
+              <GlassButton
+                aria-label="Previous slide"
+                onClick={() => {
+                  setDirection(-1);
+                  setActiveSlide(
+                    (prev) =>
+                      (prev - 1 + slides.length) %
+                      slides.length
+                  );
+                }}
+                style={{
+                  width: 40,
+                  height: 36,
+                  padding: 0,
+                  background: "rgba(2,6,4,.48)",
+                  backdropFilter: "blur(10px)",
+                  border:
+                    "1px solid rgba(255,255,255,.14)",
+                  fontSize: 18,
+                }}
+              >
+                ←
+              </GlassButton>
+
+              <GlassButton
+                aria-label="Next slide"
+                onClick={() => {
+                  setDirection(1);
+                  setActiveSlide(
+                    (prev) =>
+                      (prev + 1) % slides.length
+                  );
+                }}
+                style={{
+                  width: 40,
+                  height: 36,
+                  padding: 0,
+                  background: "rgba(2,6,4,.48)",
+                  backdropFilter: "blur(10px)",
+                  border:
+                    "1px solid rgba(255,255,255,.14)",
+                  fontSize: 18,
+                }}
+              >
+                →
+              </GlassButton>
+            </div>
+          </div>
+        </motion.div>
       </div>
     </motion.div>
   </AnimatePresence>
@@ -5755,11 +6175,15 @@ return (
                 }}
               >
                 <MapContainer
+                  className="sentinel-map"
                   center={[
                     location.lat,
                     location.lng,
                   ]}
-                  zoom={14}
+                  zoom={15}
+                  minZoom={3}
+                  maxZoom={19}
+                  scrollWheelZoom={true}
                   style={{
                     height:
                       "100%",
@@ -5770,8 +6194,10 @@ return (
                   }}
                 >
                   <TileLayer
-                    url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-                    attribution="© OpenStreetMap contributors © CARTO"
+                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                    attribution="&copy; OpenStreetMap contributors"
+                    maxZoom={19}
+                    detectRetina={true}
                   />
 
                   <MapRecenter
@@ -5809,8 +6235,8 @@ return (
                   {/* Geofence */}
                   <Circle
                     center={[
-                      12.9700,
-                      79.1550,
+                      location.lat,
+                      location.lng,
                     ]}
                     radius={
                       geofenceRadius
