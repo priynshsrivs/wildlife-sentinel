@@ -28,7 +28,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from backend.dispatch import send_critical_alert
-from ai_service.audio.classifier import predict_audio_threat
+from ai_service.audio.yamnet_classifier import predict_yamnet_threat as predict_audio_threat
 
 DATABASE_FILE = PROJECT_ROOT / "wildlife_sentinel.db"
 DATABASE_URL = f"sqlite:///{DATABASE_FILE}"

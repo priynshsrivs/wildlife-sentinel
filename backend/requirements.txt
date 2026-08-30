@@ -5,3 +5,10 @@ ultralytics
 opencv-python
 pillow
 pydantic
+sqlalchemy
+numpy
+librosa
+soundfile
+tensorflow==2.21.0
+tensorflow-hub==0.16.1
+setuptools<81
