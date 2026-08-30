@@ -3,3 +3,8 @@ node_modules/
 __pycache__/
 .env
 dist/
+
+.vscode/
+.DS_Store
+frontend/.DS_Store
+wildlife-sentinel/
