@@ -95,10 +95,10 @@ CONFIGURATION
 ========================================================= */
 
 const API_BASE =
-import.meta.env.VITE_API_BASE || "http://localhost:5000/api";
+import.meta.env.VITE_API_BASE || "http://localhost:8000/api";
 
 const WS_URL =
-import.meta.env.VITE_WS_URL || "ws://localhost:5000/ws/alerts";
+import.meta.env.VITE_WS_URL || "ws://localhost:8000/ws/alerts";
 
 const DEFAULT_LOCATION = {
 lat: 12.9698,
@@ -390,57 +390,180 @@ box-sizing: border-box;
     flex-shrink: 0;
   }
 
-  /* Full-bleed threat/animal slider */
+  .hero-quote-cloud {
+    perspective: 1200px;
+  }
+
+  .hero-quote {
+    user-select: none;
+    mix-blend-mode: screen;
+    transition:
+      color .35s ease,
+      text-shadow .35s ease,
+      opacity .45s ease;
+  }
+
+  .hero-quote:not(.hero-quote-featured)::before {
+    content: "";
+    position: absolute;
+    left: -16px;
+    top: .72em;
+    width: 6px;
+    height: 6px;
+    border: 1px solid rgba(226,232,240,.34);
+    border-radius: 50%;
+    box-shadow: 0 0 12px rgba(255,255,255,.04);
+  }
+
+  .hero-quote-content {
+    animation:
+      quoteReveal 1.4s cubic-bezier(.22,1,.36,1) both,
+      quoteBreath 8s ease-in-out 1.4s infinite;
+  }
+
+  .hero-quote-content-featured {
+    animation:
+      quoteFeaturedReveal 1.7s cubic-bezier(.22,1,.36,1) both,
+      featuredBreath 7s ease-in-out 1.7s infinite;
+  }
+
+  .hero-quote-orbit-one {
+    animation: orbitSlow 30s linear infinite;
+  }
+
+  .hero-quote-orbit-two {
+    animation: orbitReverse 22s linear infinite;
+  }
+
+  @keyframes quoteReveal {
+    0% {
+      opacity: 0;
+      transform: translate3d(0, 18px, 0) rotate(0deg);
+      filter: blur(7px);
+    }
+    100% {
+      opacity: 1;
+      transform: translate3d(0, 0, 0) rotate(0deg);
+      filter: blur(0);
+    }
+  }
+
+  @keyframes quoteFeaturedReveal {
+    0% {
+      opacity: 0;
+      transform: translate3d(0, 28px, 0) scale(.95) rotate(2deg);
+      filter: blur(10px);
+    }
+    65% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 1;
+      transform: translate3d(0, 0, 0) scale(1) rotate(-1deg);
+      filter: blur(0);
+    }
+  }
+
+  @keyframes quoteBreath {
+    0%, 100% {
+      letter-spacing: -.015em;
+    }
+    50% {
+      letter-spacing: -.008em;
+    }
+  }
+
+  @keyframes featuredBreath {
+    0%, 100% {
+      text-shadow: 0 0 42px rgba(248,250,252,.055);
+    }
+    50% {
+      text-shadow: 0 0 62px rgba(74,222,128,.09);
+    }
+  }
+
+  @keyframes orbitSlow {
+    from {
+      transform: translate(-50%, -50%) rotate(0deg);
+    }
+    to {
+      transform: translate(-50%, -50%) rotate(360deg);
+    }
+  }
+
+  @keyframes orbitReverse {
+    from {
+      transform: translate(-50%, -50%) rotate(360deg);
+    }
+    to {
+      transform: translate(-50%, -50%) rotate(0deg);
+    }
+  }
+
+  .hero-quote:hover {
+    color: rgba(248,250,252,.82) !important;
+  }
+
+  .hero-quote-featured:hover {
+    color: #f8fafc !important;
+  }
+
+  /* =========================================================
+     PREMIUM CINEMATIC THREAT SLIDER
+     ========================================================= */
   .threat-slide-inner {
     position: relative;
     z-index: 2;
-    min-height: 360px;
-    height: 360px;
+    min-height: 390px;
+    height: 390px;
     display: flex;
     align-items: center;
     overflow: hidden;
     border-radius: 15px;
+    isolation: isolate;
   }
 
   .threat-slide-copy {
     position: relative;
-    z-index: 5;
-    width: min(650px, 68%);
-    max-width: 650px;
-    padding: 34px 34px 78px;
+    z-index: 10;
+    width: min(760px, 73%);
+    max-width: 760px;
+    padding: 42px 42px 92px;
   }
 
   .threat-slide-image-wrap {
     position: absolute;
-    inset: 0;
+    inset: -1px;
     z-index: 0;
-    height: 100%;
+    height: calc(100% + 2px);
     border-radius: 15px;
     overflow: hidden;
     border: 0;
     background: #07100b;
     box-shadow: none;
     pointer-events: none;
+    will-change: transform, opacity;
   }
 
   .threat-slide-image-wrap::before {
     content: "";
     position: absolute;
     inset: 0;
-    z-index: 1;
+    z-index: 2;
     background:
       linear-gradient(
         90deg,
-        rgba(2, 6, 4, .88) 0%,
-        rgba(2, 6, 4, .66) 28%,
-        rgba(2, 6, 4, .28) 58%,
-        rgba(2, 6, 4, .10) 100%
+        rgba(2, 6, 4, .93) 0%,
+        rgba(2, 6, 4, .78) 22%,
+        rgba(2, 6, 4, .42) 49%,
+        rgba(2, 6, 4, .12) 73%,
+        rgba(2, 6, 4, .02) 100%
       ),
       linear-gradient(
         0deg,
-        rgba(2, 6, 4, .74) 0%,
-        rgba(2, 6, 4, .10) 48%,
-        rgba(2, 6, 4, .18) 100%
+        rgba(2, 6, 4, .80) 0%,
+        rgba(2, 6, 4, .18) 42%,
+        rgba(2, 6, 4, .24) 100%
       );
     pointer-events: none;
   }
@@ -449,21 +572,22 @@ box-sizing: border-box;
     content: "";
     position: absolute;
     inset: 0;
-    z-index: 2;
+    z-index: 3;
     background:
       radial-gradient(
-        circle at 72% 48%,
-        rgba(255,255,255,.06),
-        transparent 42%
+        circle at 76% 48%,
+        rgba(255,255,255,.08),
+        transparent 34%
       ),
       linear-gradient(
         135deg,
-        rgba(255,255,255,.04),
-        transparent 28%,
-        transparent 72%,
-        rgba(0,0,0,.16)
+        rgba(255,255,255,.05),
+        transparent 25%,
+        transparent 70%,
+        rgba(0,0,0,.22)
       );
     pointer-events: none;
+    mix-blend-mode: screen;
   }
 
   .threat-slide-image {
@@ -472,38 +596,56 @@ box-sizing: border-box;
     display: block;
     object-fit: cover;
     object-position: center center;
-    transform: scale(1.025);
-    filter: saturate(.96) contrast(1.04);
+    transform: scale(1.045);
+    filter: saturate(1.02) contrast(1.06) brightness(.90);
+    will-change: transform, filter;
   }
 
   .threat-slide-image-badge {
     position: absolute;
     right: 22px;
     top: 20px;
-    z-index: 4;
-    padding: 7px 10px;
+    z-index: 12;
+    padding: 8px 11px;
     border-radius: 999px;
-    background: rgba(2,6,4,.54);
+    background: rgba(2,6,4,.48);
     border: 1px solid rgba(255,255,255,.14);
     color: #f8fafc;
     font-size: 9px;
     font-weight: 800;
-    letter-spacing: .13em;
-    backdrop-filter: blur(10px);
+    letter-spacing: .15em;
+    backdrop-filter: blur(12px);
     box-shadow: 0 10px 30px rgba(0,0,0,.18);
   }
 
   .threat-slide-shell {
     position: relative;
-    min-height: 360px;
-    border-radius: 16px;
+    min-height: 390px;
+    border-radius: 17px;
     overflow: hidden;
-    border: 1px solid rgba(255,255,255,.11);
+    border: 1px solid rgba(255,255,255,.12);
     background: #07100b;
     box-shadow:
-      0 22px 65px rgba(0,0,0,.28),
-      inset 0 1px 0 rgba(255,255,255,.045);
+      0 25px 80px rgba(0,0,0,.34),
+      inset 0 1px 0 rgba(255,255,255,.055),
+      inset 0 0 0 1px rgba(255,255,255,.025);
     isolation: isolate;
+    perspective: 1100px;
+    transform-style: preserve-3d;
+  }
+
+  .threat-slide-shell::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    pointer-events: none;
+    background:
+      radial-gradient(circle at 18% 18%, rgba(255,255,255,.055) 0 1px, transparent 1.5px),
+      radial-gradient(circle at 66% 76%, rgba(255,255,255,.035) 0 1px, transparent 1.5px);
+    background-size: 23px 23px, 31px 31px;
+    opacity: .18;
+    mix-blend-mode: screen;
   }
 
   .threat-slide-shell::after {
@@ -512,21 +654,320 @@ box-sizing: border-box;
     inset: 0;
     border-radius: inherit;
     pointer-events: none;
-    z-index: 8;
-    box-shadow: inset 0 0 0 1px rgba(255,255,255,.035);
+    z-index: 20;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.04);
   }
 
   .threat-slide-content {
     position: relative;
     z-index: 6;
-    min-height: 360px;
-    height: 360px;
+    min-height: 390px;
+    height: 390px;
   }
 
   .threat-slider-container {
     position: relative;
-    min-height: 360px;
+    min-height: 390px;
     margin-bottom: 22px;
+  }
+
+  .threat-scanline {
+    position: absolute;
+    left: -5%;
+    right: -5%;
+    top: -12%;
+    height: 2px;
+    z-index: 7;
+    pointer-events: none;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,.04) 14%, rgba(74,222,128,.72) 50%, rgba(255,255,255,.04) 86%, transparent);
+    box-shadow: 0 0 18px rgba(74,222,128,.18);
+    opacity: .55;
+    animation: threatScan 5.8s cubic-bezier(.42,0,.58,1) infinite;
+  }
+
+  .threat-sweep {
+    position: absolute;
+    top: -18%;
+    bottom: -18%;
+    left: -18%;
+    width: 18%;
+    z-index: 6;
+    pointer-events: none;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,.07), transparent);
+    filter: blur(6px);
+    transform: skewX(-18deg);
+    animation: threatSweep 4.8s ease-in-out infinite;
+    opacity: .38;
+  }
+
+  .threat-radar {
+    position: absolute;
+    right: 9%;
+    top: 50%;
+    width: 240px;
+    height: 240px;
+    transform: translateY(-50%);
+    border-radius: 50%;
+    z-index: 4;
+    pointer-events: none;
+    opacity: .32;
+    border: 1px solid rgba(255,255,255,.08);
+    box-shadow: inset 0 0 55px rgba(74,222,128,.025);
+  }
+
+  .threat-radar::before,
+  .threat-radar::after {
+    content: "";
+    position: absolute;
+    inset: 18%;
+    border-radius: 50%;
+    border: 1px dashed rgba(255,255,255,.12);
+  }
+
+  .threat-radar::after {
+    inset: 37%;
+    border-style: solid;
+    border-color: rgba(255,255,255,.10);
+  }
+
+  .threat-radar-orbit {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border-top: 1px solid rgba(255,255,255,.2);
+    border-right: 1px solid transparent;
+    animation: radarOrbit 6.5s linear infinite;
+  }
+
+  .threat-radar-dot {
+    position: absolute;
+    left: 17%;
+    top: 22%;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 0 15px rgba(255,255,255,.65);
+    animation: radarDot 2.4s ease-in-out infinite;
+  }
+
+  .threat-corner {
+    position: absolute;
+    width: 28px;
+    height: 28px;
+    z-index: 9;
+    pointer-events: none;
+    border-color: rgba(255,255,255,.34);
+  }
+
+  .threat-corner.tl { top: 14px; left: 14px; border-top: 1px solid; border-left: 1px solid; }
+  .threat-corner.tr { top: 14px; right: 14px; border-top: 1px solid; border-right: 1px solid; }
+  .threat-corner.bl { bottom: 14px; left: 14px; border-bottom: 1px solid; border-left: 1px solid; }
+  .threat-corner.br { bottom: 14px; right: 14px; border-bottom: 1px solid; border-right: 1px solid; }
+
+  .threat-particle {
+    position: absolute;
+    z-index: 7;
+    width: 2px;
+    height: 2px;
+    border-radius: 50%;
+    background: rgba(255,255,255,.78);
+    box-shadow: 0 0 10px rgba(255,255,255,.22);
+    pointer-events: none;
+    animation: threatParticleFloat 4.8s ease-in-out infinite;
+  }
+
+  .threat-meta-line {
+    position: absolute;
+    left: 34px;
+    top: 25px;
+    z-index: 11;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: rgba(248,250,252,.56);
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    text-shadow: 0 2px 15px rgba(0,0,0,.6);
+  }
+
+  .threat-meta-line span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .threat-meta-divider {
+    width: 20px;
+    height: 1px;
+    background: rgba(255,255,255,.16);
+  }
+
+  .threat-title-wrap {
+    position: relative;
+    margin-top: 2px;
+    width: min(950px, 83vw);
+  }
+
+  .threat-title-line {
+    position: relative;
+    display: block;
+    width: max-content;
+    max-width: 100%;
+    overflow: visible;
+    line-height: .82;
+    letter-spacing: -.065em;
+    font-family: Georgia, 'Times New Roman', serif;
+    font-size: clamp(58px, 9.1vw, 150px);
+    font-weight: 500;
+    white-space: nowrap;
+    text-transform: uppercase;
+    perspective: 900px;
+  }
+
+  .threat-title-line + .threat-title-line {
+    margin-top: 2px;
+  }
+
+  .threat-title-char {
+    display: inline-block;
+    transform-origin: 50% 90%;
+    will-change: transform, opacity, filter, color;
+  }
+
+  .threat-title-underline {
+    position: absolute;
+    left: 0;
+    bottom: -17px;
+    width: min(260px, 40%);
+    height: 1px;
+    overflow: hidden;
+    background: rgba(255,255,255,.16);
+  }
+
+  .threat-title-underline::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-105%);
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,.9), transparent);
+    animation: titleUnderlineSweep 2.8s ease-in-out infinite 1.2s;
+  }
+
+  .threat-bottom-glow {
+    position: absolute;
+    left: 17%;
+    right: 33%;
+    bottom: 5px;
+    height: 90px;
+    z-index: 2;
+    pointer-events: none;
+    background: radial-gradient(ellipse at center, rgba(74,222,128,.07), transparent 68%);
+    filter: blur(18px);
+  }
+
+  .threat-live-ping {
+    position: relative;
+    width: 7px;
+    height: 7px;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    background: currentColor;
+    box-shadow: 0 0 0 0 currentColor;
+    animation: livePing 1.9s ease-out infinite;
+  }
+
+  .threat-nav-button {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .threat-nav-button::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,.10), transparent);
+    transform: translateX(-130%);
+    transition: transform .6s ease;
+  }
+
+  .threat-nav-button:hover::before {
+    transform: translateX(130%);
+  }
+
+  .threat-dot-button {
+    position: relative;
+  }
+
+  .threat-dot-button::after {
+    content: "";
+    position: absolute;
+    inset: -5px;
+    border-radius: 999px;
+    border: 1px solid currentColor;
+    opacity: 0;
+    transform: scale(.65);
+    transition: transform .45s ease, opacity .45s ease;
+  }
+
+  .threat-dot-button:hover::after,
+  .threat-dot-button[data-active="true"]::after {
+    opacity: .18;
+    transform: scale(1);
+  }
+
+  @keyframes threatScan {
+    0%, 8% { transform: translateY(-10%); opacity: 0; }
+    14% { opacity: .55; }
+    54% { opacity: .32; }
+    100% { transform: translateY(125%); opacity: 0; }
+  }
+
+  @keyframes threatSweep {
+    0%, 12% { transform: translateX(-30vw) skewX(-18deg); opacity: 0; }
+    22% { opacity: .35; }
+    58% { opacity: .20; }
+    100% { transform: translateX(145vw) skewX(-18deg); opacity: 0; }
+  }
+
+  @keyframes radarOrbit {
+    to { transform: rotate(360deg); }
+  }
+
+  @keyframes radarDot {
+    0%, 100% { transform: scale(.8); opacity: .5; }
+    50% { transform: scale(1.45); opacity: 1; }
+  }
+
+  @keyframes threatParticleFloat {
+    0%, 100% { transform: translate3d(0,0,0) scale(.65); opacity: .12; }
+    50% { transform: translate3d(6px,-12px,0) scale(1); opacity: .65; }
+  }
+
+  @keyframes titleUnderlineSweep {
+    0%, 28% { transform: translateX(-105%); }
+    52% { transform: translateX(105%); }
+    100% { transform: translateX(105%); }
+  }
+
+  @keyframes livePing {
+    0% { box-shadow: 0 0 0 0 currentColor; }
+    70% { box-shadow: 0 0 0 7px transparent; }
+    100% { box-shadow: 0 0 0 0 transparent; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .threat-scanline,
+    .threat-sweep,
+    .threat-radar-orbit,
+    .threat-radar-dot,
+    .threat-particle,
+    .threat-title-underline::after,
+    .threat-live-ping {
+      animation: none !important;
+    }
   }
 
     @media (max-width: 1100px) {
@@ -543,13 +984,13 @@ box-sizing: border-box;
     }
 
     .threat-slide-inner {
-      min-height: 360px;
-      height: 360px;
+      min-height: 390px;
+      height: 390px;
     }
 
     .threat-slide-copy {
-      width: min(72%, 620px);
-      padding: 30px 30px 76px;
+      width: min(74%, 650px);
+      padding: 34px 30px 90px;
     }
 
     .threat-slide-image-badge {
@@ -559,8 +1000,56 @@ box-sizing: border-box;
   }
 
   @media (max-width: 750px) {
+    .hero-quote {
+      width: 44% !important;
+      font-size: 11px !important;
+      line-height: 1.34 !important;
+    }
+
+    .hero-quote-featured {
+      width: 78% !important;
+      left: 50% !important;
+      right: auto !important;
+      top: 50% !important;
+      font-size: 19px !important;
+      line-height: 1.15 !important;
+    }
+
+    .hero-quote-3 {
+      top: 55% !important;
+      left: 2% !important;
+    }
+
+    .hero-quote-5 {
+      top: 70% !important;
+      right: 2% !important;
+      left: auto !important;
+    }
+
+    .hero-quote-6 {
+      top: 80% !important;
+      left: 2% !important;
+    }
+
+    .hero-quote-7 {
+      top: 77% !important;
+      left: 50% !important;
+      right: auto !important;
+      width: 52% !important;
+    }
+
+    .hero-quote-orbit-one {
+      width: 86vw !important;
+      height: 86vw !important;
+    }
+
+    .hero-quote-orbit-two {
+      width: 52vw !important;
+      height: 52vw !important;
+    }
+
     .threat-slider-container {
-      min-height: 430px;
+      min-height: 450px;
     }
 
     .desktop-sidebar {
@@ -584,19 +1073,19 @@ box-sizing: border-box;
     }
 
     .threat-slide-inner {
-      min-height: 430px;
-      height: 430px;
+      min-height: 450px;
+      height: 450px;
     }
 
     .threat-slide-copy {
       width: 100%;
       max-width: 100%;
-      padding: 28px 22px 82px;
+      padding: 34px 22px 92px;
     }
 
     .threat-slide-content {
-      min-height: 430px;
-      height: 430px;
+      min-height: 450px;
+      height: 450px;
     }
 
     .threat-slide-image-badge {
@@ -604,7 +1093,40 @@ box-sizing: border-box;
       top: 14px;
       font-size: 8px;
     }
+
+    .threat-meta-line {
+      left: 22px;
+      top: 22px;
+      font-size: 7px;
+    }
+
+    .threat-radar {
+      width: 150px;
+      height: 150px;
+      right: 3%;
+      top: 43%;
+      opacity: .23;
+    }
+
+    .threat-title-line {
+      font-size: clamp(52px, 15vw, 92px);
+    }
+
+    .threat-title-underline {
+      bottom: -11px;
+    }
   }
+  @media (prefers-reduced-motion: reduce) {
+    .hero-quote,
+    .hero-quote-content,
+    .hero-quote-content-featured,
+    .hero-quote-orbit-one,
+    .hero-quote-orbit-two {
+      animation: none !important;
+      transition: none !important;
+    }
+  }
+
 `}</style>
 
 );
@@ -622,10 +1144,12 @@ danger = false,
 success = false,
 disabled = false,
 icon,
+className = "",
 style = {},
 }) {
 return (
 <button
+className={className}
 disabled={disabled}
 onClick={onClick}
 style={{
@@ -774,6 +1298,100 @@ const protectTitleRef = useRef(null);
 const protectCopyRef = useRef(null);
 const protectGlowRef = useRef(null);
 const reserveRef = useRef(null);
+const quoteCloudRef = useRef(null);
+const quoteRefs = useRef([]);
+const pointerRef = useRef({ x: 0, y: 0 });
+
+const heroQuotes = [
+  {
+    text: `"I am the voice of the voiceless; through me the dumb shall speak, till the deaf world's ear be made to hear the cry of the wordless weak."`,
+    author: "Ella Wheeler Wilcox",
+    top: "7%",
+    left: "4%",
+    width: "34%",
+    rotate: -3,
+    size: "clamp(12px, 1.05vw, 16px)",
+    opacity: 0.18,
+    depth: 16,
+    align: "left",
+  },
+  {
+    text: `"Animals cannot speak, but can you and I not speak for them and represent them? Let us all feel their silent cry of agony."`,
+    author: "Rukmini Devi Arundale",
+    top: "20%",
+    right: "3%",
+    width: "32%",
+    rotate: 2.5,
+    size: "clamp(12px, 1.1vw, 17px)",
+    opacity: 0.15,
+    depth: 13,
+    align: "right",
+  },
+  {
+    text: `"The greatness of a nation and its moral progress can be judged by the way its animals are treated."`,
+    author: "Mahatma Gandhi",
+    top: "48%",
+    left: "5%",
+    width: "30%",
+    rotate: -2,
+    size: "clamp(13px, 1.15vw, 18px)",
+    opacity: 0.2,
+    depth: 19,
+    align: "left",
+  },
+  {
+    text: `"Our task must be to free ourselves by widening our circle of compassion to embrace all living creatures and the whole of nature and its beauty."`,
+    author: "Albert Einstein",
+    top: "09%",
+    left: "51%",
+    width: "50%",
+    translateX: "-50%",
+    rotate: -1,
+    size: "clamp(20px, 2vw, 31px)",
+    opacity: 0.62,
+    depth: 8,
+    align: "center",
+    featured: true,
+  },
+  {
+    text: `"We must fight against the spirit of unconscious cruelty with which we treat the animals. Animals suffer as much as we do."`,
+    author: "Albert Schweitzer",
+    top: "68%",
+    right: "6%",
+    width: "31%",
+    rotate: 3,
+    size: "clamp(12px, 1.08vw, 17px)",
+    opacity: 0.17,
+    depth: 15,
+    align: "right",
+  },
+  {
+    text: `"You can judge a man's true character by the way he treats his fellow animals."`,
+    author: "Paul McCartney",
+    top: "79%",
+    left: "6%",
+    width: "31%",
+    rotate: -2.5,
+    size: "clamp(12px, 1.03vw, 16px)",
+    opacity: 0.14,
+    depth: 11,
+    align: "left",
+  },
+  {
+    text: `"Only if we understand, can we care. Only if we care, we will help. Only if we help, we shall be saved."`,
+    author: "Jane Goodall",
+    top: "78%",
+    left: "50%",
+    width: "34%",
+    translateX: "-50%",
+    rotate: 1.5,
+    size: "clamp(12px, 1.05vw, 16px)",
+    opacity: 0.16,
+    depth: 17,
+    align: "center",
+  },
+];
+
 
 useEffect(() => {
 const section = heroRef.current;
@@ -846,6 +1464,41 @@ const handleScroll = () => {
       sensorAudioRef.current.style.opacity =
         `${1 - progress * 0.9}`;
     }
+
+    // Layered quote parallax: the words move at different depths and
+    // gently dissolve as the opening scene transitions onward.
+    const pointer = pointerRef.current;
+    const quoteFade = Math.max(0, 1 - progress * 1.18);
+
+    if (quoteCloudRef.current) {
+      quoteCloudRef.current.style.opacity =
+        `${0.96 * quoteFade}`;
+      quoteCloudRef.current.style.transform =
+        `translate3d(${pointer.x * -10}px, ${progress * -18 + pointer.y * -8}px, 0) scale(${1 + progress * 0.018})`;
+    }
+
+    quoteRefs.current.forEach((node, index) => {
+      if (!node) return;
+
+      const quote = heroQuotes[index];
+      const depth = quote.depth || 12;
+      const parallaxX = pointer.x * depth;
+      const parallaxY = pointer.y * depth;
+      const driftX =
+        (index % 2 === 0 ? -1 : 1) *
+        progress *
+        (7 + index * 2);
+      const driftY = progress * (10 + index * 3);
+      const rotate = quote.rotate + pointer.x * 0.9;
+      const baseX = quote.translateX || "0";
+
+      node.style.opacity =
+        `${(quote.opacity || 0.15) * quoteFade}`;
+      node.style.transform =
+        `translate3d(calc(${baseX} + ${parallaxX + driftX}px), ${parallaxY + driftY}px, 0) rotate(${rotate}deg)`;
+      node.style.filter =
+        `blur(${progress * 0.7 + (quote.featured ? 0 : 0.15)}px)`;
+    });
   });
 };
 
@@ -862,6 +1515,44 @@ return () => {
     handleScroll
   );
 };
+}, []);
+
+useEffect(() => {
+  const section = heroRef.current;
+  if (!section) return;
+
+  const handlePointerMove = (event) => {
+    const rect = section.getBoundingClientRect();
+    const x =
+      (event.clientX - rect.left) /
+        Math.max(rect.width, 1) -
+      0.5;
+    const y =
+      (event.clientY - rect.top) /
+        Math.max(rect.height, 1) -
+      0.5;
+
+    pointerRef.current = {
+      x: Math.max(-0.5, Math.min(0.5, x)),
+      y: Math.max(-0.5, Math.min(0.5, y)),
+    };
+  };
+
+  const handlePointerLeave = () => {
+    pointerRef.current = { x: 0, y: 0 };
+  };
+
+  section.addEventListener("pointermove", handlePointerMove, {
+    passive: true,
+  });
+  section.addEventListener("pointerleave", handlePointerLeave, {
+    passive: true,
+  });
+
+  return () => {
+    section.removeEventListener("pointermove", handlePointerMove);
+    section.removeEventListener("pointerleave", handlePointerLeave);
+  };
 }, []);
 
 useEffect(() => {
@@ -1127,6 +1818,138 @@ return (
         </div>
       </nav>
 
+      {/* =====================================================
+          FLOATING QUOTE FIELD
+          A layered editorial field of conservation quotes.
+          The central quote is intentionally strongest.
+      ===================================================== */}
+      <div
+        ref={quoteCloudRef}
+        className="hero-quote-cloud"
+        aria-hidden="true"
+        style={{
+          position: "absolute",
+          inset: 0,
+          zIndex: 2,
+          pointerEvents: "none",
+          overflow: "hidden",
+          opacity: 0.96,
+          willChange: "transform, opacity",
+        }}
+      >
+        <div
+          className="hero-quote-orbit hero-quote-orbit-one"
+          style={{
+            position: "absolute",
+            width: "48vw",
+            height: "48vw",
+            maxWidth: 760,
+            maxHeight: 760,
+            left: "50%",
+            top: "49%",
+            transform: "translate(-50%, -50%)",
+            borderRadius: "50%",
+            border: "1px solid rgba(255,255,255,.028)",
+            boxShadow: "0 0 90px rgba(74,222,128,.018)",
+          }}
+        />
+        <div
+          className="hero-quote-orbit hero-quote-orbit-two"
+          style={{
+            position: "absolute",
+            width: "29vw",
+            height: "29vw",
+            maxWidth: 470,
+            maxHeight: 470,
+            left: "50%",
+            top: "49%",
+            transform: "translate(-50%, -50%)",
+            borderRadius: "50%",
+            border: "1px solid rgba(74,222,128,.035)",
+          }}
+        />
+
+        {heroQuotes.map((quote, index) => (
+          <div
+            key={`${quote.author}-${index}`}
+            ref={(node) => {
+              quoteRefs.current[index] = node;
+            }}
+            className={`hero-quote hero-quote-${index + 1} ${
+              quote.featured
+                ? "hero-quote-featured"
+                : ""
+            }`}
+            style={{
+              position: "absolute",
+              top: quote.top,
+              left: quote.left,
+              right: quote.right,
+              width: quote.width,
+              transform:
+                `translate3d(${quote.translateX || "0"}, 0, 0) rotate(${quote.rotate}deg)`,
+              fontFamily: quote.featured
+                ? "Georgia, 'Times New Roman', serif"
+                : "Inter, ui-sans-serif, system-ui, sans-serif",
+              fontSize: quote.size,
+              fontWeight: quote.featured ? 500 : 450,
+              lineHeight: quote.featured ? 1.18 : 1.42,
+              letterSpacing:
+                quote.featured ? "-.025em" : "-.015em",
+              color: quote.featured
+                ? "rgba(248,250,252,.92)"
+                : "rgba(210,220,214,.64)",
+              textAlign: quote.align,
+              textShadow: quote.featured
+                ? "0 0 42px rgba(248,250,252,.075)"
+                : "0 0 28px rgba(0,0,0,.45)",
+              opacity: quote.opacity,
+              padding: quote.featured
+                ? "0 12px"
+                : 0,
+              willChange:
+                "transform, opacity, filter",
+            }}
+          >
+            <div
+              className={`hero-quote-content ${
+                quote.featured
+                  ? "hero-quote-content-featured"
+                  : ""
+              }`}
+            >
+              <span
+                style={{
+                  position: "relative",
+                  display: "inline",
+                }}
+              >
+                {quote.text}
+              </span>
+              <span
+                className="hero-quote-author"
+                style={{
+                  display: "block",
+                  marginTop: 8,
+                  fontFamily:
+                    "Inter, ui-sans-serif, system-ui, sans-serif",
+                  fontSize:
+                    quote.featured ? "0.42em" : "0.56em",
+                  fontWeight: 650,
+                  letterSpacing: ".08em",
+                  textTransform: "uppercase",
+                  color: quote.featured
+                    ? "rgba(74,222,128,.78)"
+                    : "rgba(148,163,152,.52)",
+                }}
+              >
+                — {quote.author}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+
       {/* Hero typography */}
       <div
         style={{
@@ -1184,7 +2007,7 @@ return (
         style={{
           position: "absolute",
           zIndex: 8,
-          left: "7vw",
+          left: "14vw",
           top: "31vh",
           width:
             "clamp(300px, 34vw, 495px)",
@@ -2438,6 +3261,7 @@ const audioInputRef = useRef(null);
 const slides = [
 {
 title: "ANIMAL",
+titleLines: ["WILDLIFE", "DETECTED."],
 subtitle: "WILDLIFE DETECTED",
 description:
 "AI identifies and tracks wildlife movement in real time.",
@@ -2449,17 +3273,19 @@ accent: "#4ade80",
 },
 {
 title: "POACHING",
+titleLines: ["STOP", "THE THREAT."],
 subtitle: "THREAT DETECTED",
 description:
 "Suspicious activity detected inside a protected zone.",
 image: poachersImage,
-backgroundImage: poachingBg,
+backgroundImage: poachersImage,
 imageAlt: "Poaching threat detected by Sentinel",
 imagePosition: "center center",
 accent: "#ef4444",
 },
 {
 title: "VEHICLE",
+titleLines: ["UNAUTHORIZED", "MOVEMENT."],
 subtitle: "UNAUTHORIZED VEHICLE",
 description:
 "Vehicle movement detected near a restricted boundary.",
@@ -2471,11 +3297,12 @@ accent: "#38bdf8",
 },
 {
 title: "TRESPASSER",
+titleLines: ["HUMAN", "INTRUSION."],
 subtitle: "HUMAN INTRUSION",
 description:
 "Human presence detected inside the reserve.",
 image: trespasserImage,
-backgroundImage: trespasserBg,
+backgroundImage: trespasserImage,
 imageAlt: "Human intrusion detected by Sentinel",
 imagePosition: "center center",
 accent: "#f59e0b",
@@ -3895,7 +4722,7 @@ return (
                 />
               </motion.div>
 {/* =====================================================
-     ANIMATED THREAT SLIDER
+     PREMIUM ANIMATED THREAT SLIDER
 ===================================================== */}
 
 <div className="threat-slider-container">
@@ -3904,319 +4731,484 @@ return (
       key={activeSlide}
       initial={{
         opacity: 0,
-        x: direction > 0 ? 90 : -90,
-        scale: 0.965,
-        rotate: direction > 0 ? 1.5 : -1.5,
-        filter: "blur(5px)",
+        x: direction > 0 ? 120 : -120,
+        scale: 0.96,
+        rotateY: direction > 0 ? 5 : -5,
+        rotateZ: direction > 0 ? 1.2 : -1.2,
+        filter: "blur(8px)",
+        clipPath:
+          direction > 0
+            ? "inset(0 10% 0 0 round 18px)"
+            : "inset(0 0 0 10% round 18px)",
       }}
       animate={{
         opacity: 1,
         x: 0,
         scale: 1,
-        rotate: 0,
+        rotateY: 0,
+        rotateZ: 0,
         filter: "blur(0px)",
+        clipPath: "inset(0 0% 0 0% round 18px)",
       }}
       exit={{
         opacity: 0,
-        x: direction > 0 ? -90 : 90,
-        scale: 0.975,
-        rotate: direction > 0 ? -1.5 : 1.5,
-        filter: "blur(5px)",
+        x: direction > 0 ? -120 : 120,
+        scale: 0.985,
+        rotateY: direction > 0 ? -4 : 4,
+        rotateZ: direction > 0 ? -1.1 : 1.1,
+        filter: "blur(7px)",
+        clipPath:
+          direction > 0
+            ? "inset(0 0 0 11% round 18px)"
+            : "inset(0 11% 0 0 round 18px)",
       }}
       transition={{
-        duration: 0.72,
+        duration: 0.88,
         ease: [0.22, 1, 0.36, 1],
       }}
       style={{
         position: "relative",
         width: "100%",
+        transformStyle: "preserve-3d",
       }}
     >
-      <div className="threat-slide-shell">
+      <motion.div
+        className="threat-slide-shell"
+        initial={{ boxShadow: `0 25px 80px ${slides[activeSlide].accent}00` }}
+        animate={{
+          boxShadow: [
+            `0 25px 80px ${slides[activeSlide].accent}00`,
+            `0 25px 80px ${slides[activeSlide].accent}18`,
+            `0 25px 80px ${slides[activeSlide].accent}05`,
+          ],
+        }}
+        transition={{ duration: 1.4, ease: "easeOut" }}
+        onMouseMove={(event) => {
+          const rect = event.currentTarget.getBoundingClientRect();
+          const x = (event.clientX - rect.left) / rect.width - 0.5;
+          const y = (event.clientY - rect.top) / rect.height - 0.5;
+          event.currentTarget.style.setProperty("--threat-mx", `${x * 14}px`);
+          event.currentTarget.style.setProperty("--threat-my", `${y * 9}px`);
+        }}
+        onMouseLeave={(event) => {
+          event.currentTarget.style.setProperty("--threat-mx", "0px");
+          event.currentTarget.style.setProperty("--threat-my", "0px");
+        }}
+      >
         <motion.div
           className="threat-slide-content"
-          initial={{ opacity: 0.96 }}
+          initial={{ opacity: 0.98 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.35 }}
         >
           <motion.div
-            className="threat-slide-inner"
-            initial={{ opacity: 0.96 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.35 }}
+            className="threat-slide-image-wrap"
+            style={{
+              backgroundImage: `url(${slides[activeSlide].backgroundImage || slides[activeSlide].image})`,
+              backgroundSize: "cover",
+              backgroundPosition:
+                slides[activeSlide].imagePosition || "center center",
+              backgroundRepeat: "no-repeat",
+            }}
+            initial={{
+              scale: 1.14,
+              opacity: 0.62,
+              x: direction > 0 ? 36 : -36,
+              filter: "saturate(.75) brightness(.72)",
+            }}
+            animate={{
+              scale: 1.045,
+              opacity: 1,
+              x: 0,
+              filter: "saturate(1.02) brightness(.90)",
+            }}
+            transition={{
+              duration: 1.18,
+              ease: [0.22, 1, 0.36, 1],
+            }}
           >
-            <motion.div
-              className="threat-slide-image-wrap"
+            <img
+              className="threat-slide-image"
+              src={slides[activeSlide].image}
+              alt={slides[activeSlide].imageAlt || slides[activeSlide].title}
+              loading="eager"
+              draggable="false"
               style={{
-                backgroundImage: `url(${slides[activeSlide].backgroundImage})`,
-                backgroundSize: "cover",
-                backgroundPosition:
+                objectPosition:
                   slides[activeSlide].imagePosition || "center center",
-                backgroundRepeat: "no-repeat",
+                transform:
+                  "translate3d(var(--threat-mx, 0px), var(--threat-my, 0px), 0) scale(1.045)",
               }}
-              initial={{
-                scale: 1.08,
-                opacity: 0.72,
-                x: direction > 0 ? 22 : -22,
+              onError={(e) => {
+                console.error(
+                  "Slide image failed to load:",
+                  slides[activeSlide].title,
+                  slides[activeSlide].image
+                );
+                e.currentTarget.style.opacity = "0";
               }}
-              animate={{
-                scale: 1.025,
-                opacity: 1,
-                x: 0,
-              }}
-              transition={{
-                duration: 1.0,
-                ease: [0.22, 1, 0.36, 1],
-              }}
-            >
-              <div
-                className="threat-slide-image-badge"
-                style={{
-                  borderColor: `${slides[activeSlide].accent}55`,
-                  color: slides[activeSlide].accent,
-                }}
-              >
-                AI VISION / LIVE
-              </div>
-
-              <img
-                className="threat-slide-image"
-                src={slides[activeSlide].image}
-                alt={
-                  slides[activeSlide].imageAlt ||
-                  slides[activeSlide].title
-                }
-                loading="eager"
-                draggable="false"
-                style={{
-                  objectPosition:
-                    slides[activeSlide].imagePosition ||
-                    "center center",
-                }}
-                onError={(e) => {
-                  console.error(
-                    "Slide image failed to load:",
-                    slides[activeSlide].title,
-                    slides[activeSlide].image
-                  );
-                  e.currentTarget.style.display = "none";
-                }}
-              />
-            </motion.div>
-
-            <motion.div
-              className="threat-slide-copy"
-              initial={{
-                opacity: 0,
-                y: 22,
-                x: direction > 0 ? 18 : -18,
-              }}
-              animate={{
-                opacity: 1,
-                y: 0,
-                x: 0,
-              }}
-              transition={{
-                duration: 0.58,
-                delay: 0.12,
-                ease: [0.22, 1, 0.36, 1],
-              }}
-            >
-              <div
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 8,
-                  color: slides[activeSlide].accent,
-                  fontSize: 10,
-                  fontWeight: 800,
-                  letterSpacing: ".2em",
-                  marginBottom: 13,
-                  textShadow:
-                    "0 2px 14px rgba(0,0,0,.55)",
-                }}
-              >
-                <span
-                  style={{
-                    width: 7,
-                    height: 7,
-                    borderRadius: "50%",
-                    background: slides[activeSlide].accent,
-                    boxShadow:
-                      `0 0 12px ${slides[activeSlide].accent}`,
-                  }}
-                />
-                {slides[activeSlide].subtitle}
-              </div>
-
-              <h2
-                style={{
-                  margin: 0,
-                  color: "#fff",
-                  fontSize: "clamp(40px, 6vw, 72px)",
-                  lineHeight: 0.94,
-                  fontWeight: 850,
-                  letterSpacing: "-.055em",
-                  textShadow:
-                    "0 5px 28px rgba(0,0,0,.55)",
-                }}
-              >
-                {slides[activeSlide].title}
-              </h2>
-
-              <p
-                style={{
-                  maxWidth: 500,
-                  margin: "15px 0 0",
-                  color: "rgba(248,250,252,.86)",
-                  fontSize: 14,
-                  lineHeight: 1.7,
-                  textShadow:
-                    "0 2px 18px rgba(0,0,0,.72)",
-                }}
-              >
-                {slides[activeSlide].description}
-              </p>
-
-              <div
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 8,
-                  marginTop: 20,
-                  padding: "8px 11px",
-                  borderRadius: 999,
-                  background: "rgba(2,6,4,.46)",
-                  border:
-                    "1px solid rgba(255,255,255,.13)",
-                  color: "#f8fafc",
-                  fontSize: 9,
-                  fontWeight: 800,
-                  letterSpacing: ".12em",
-                  backdropFilter: "blur(10px)",
-                  boxShadow:
-                    "0 10px 28px rgba(0,0,0,.18)",
-                }}
-              >
-                <Eye
-                  size={13}
-                  color={slides[activeSlide].accent}
-                />
-                REAL-TIME CLASSIFICATION
-              </div>
-            </motion.div>
+            />
           </motion.div>
 
           <div
+            className="threat-bottom-glow"
             style={{
-              position: "absolute",
-              left: 30,
-              right: 22,
-              bottom: 21,
-              zIndex: 10,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 14,
+              background:
+                `radial-gradient(ellipse at center, ${slides[activeSlide].accent}12, transparent 68%)`,
+            }}
+          />
+
+          <div
+            className="threat-scanline"
+            style={{
+              background:
+                `linear-gradient(90deg, transparent, ${slides[activeSlide].accent}18 20%, ${slides[activeSlide].accent}B8 50%, ${slides[activeSlide].accent}18 80%, transparent)`,
+              boxShadow: `0 0 18px ${slides[activeSlide].accent}40`,
+            }}
+          />
+
+          <div
+            className="threat-sweep"
+            style={{
+              background:
+                `linear-gradient(90deg, transparent, ${slides[activeSlide].accent}22, transparent)`,
+            }}
+          />
+
+          <div className="threat-radar" aria-hidden="true">
+            <div
+              className="threat-radar-orbit"
+              style={{ borderTopColor: `${slides[activeSlide].accent}55` }}
+            />
+            <div
+              className="threat-radar-dot"
+              style={{
+                background: slides[activeSlide].accent,
+                boxShadow: `0 0 15px ${slides[activeSlide].accent}`,
+              }}
+            />
+          </div>
+
+          <div className="threat-corner tl" style={{ borderColor: `${slides[activeSlide].accent}55` }} />
+          <div className="threat-corner tr" style={{ borderColor: `${slides[activeSlide].accent}55` }} />
+          <div className="threat-corner bl" style={{ borderColor: `${slides[activeSlide].accent}55` }} />
+          <div className="threat-corner br" style={{ borderColor: `${slides[activeSlide].accent}55` }} />
+
+          {[
+            { left: "42%", top: "26%", delay: "0s" },
+            { left: "61%", top: "35%", delay: ".9s" },
+            { left: "72%", top: "69%", delay: "1.6s" },
+            { left: "82%", top: "22%", delay: "2.2s" },
+            { left: "53%", top: "77%", delay: "2.8s" },
+            { left: "91%", top: "54%", delay: "3.4s" },
+          ].map((particle, index) => (
+            <span
+              key={`particle-${index}`}
+              className="threat-particle"
+              style={{
+                left: particle.left,
+                top: particle.top,
+                animationDelay: particle.delay,
+              }}
+            />
+          ))}
+
+          <div className="threat-meta-line">
+            <span>
+              <span
+                className="threat-live-ping"
+                style={{ color: slides[activeSlide].accent }}
+              />
+              SENTINEL / FIELD SIGNAL
+            </span>
+            <span className="threat-meta-divider" />
+            <span>NODE {String(activeSlide + 1).padStart(2, "0")}</span>
+          </div>
+
+          <div className="threat-slide-image-badge">
+            <span
+              style={{
+                color: slides[activeSlide].accent,
+                marginRight: 6,
+              }}
+            >
+              ●
+            </span>
+            AI VISION / LIVE
+          </div>
+
+          <motion.div
+            className="threat-slide-copy"
+            initial={{ opacity: 0, y: 30, x: direction > 0 ? 28 : -28 }}
+            animate={{ opacity: 1, y: 0, x: 0 }}
+            transition={{
+              duration: 0.72,
+              delay: 0.12,
+              ease: [0.22, 1, 0.36, 1],
             }}
           >
-            <div
+            <motion.div
+              initial={{ opacity: 0, y: 12, letterSpacing: ".30em" }}
+              animate={{ opacity: 1, y: 0, letterSpacing: ".20em" }}
+              transition={{ duration: 0.65, delay: 0.24 }}
               style={{
-                display: "flex",
+                display: "inline-flex",
                 alignItems: "center",
-                gap: 6,
-              }}
-            >
-              {slides.map((slide, index) => (
-                <button
-                  key={index}
-                  aria-label={`Go to ${slide.title} slide`}
-                  onClick={() => {
-                    if (index === activeSlide) return;
-                    setDirection(
-                      index > activeSlide ? 1 : -1
-                    );
-                    setActiveSlide(index);
-                  }}
-                  style={{
-                    width:
-                      index === activeSlide ? 30 : 8,
-                    height: 7,
-                    padding: 0,
-                    border: "none",
-                    borderRadius: 999,
-                    background:
-                      index === activeSlide
-                        ? slide.accent
-                        : "rgba(255,255,255,.32)",
-                    boxShadow:
-                      index === activeSlide
-                        ? `0 0 14px ${slide.accent}66`
-                        : "none",
-                    cursor: "pointer",
-                    transition:
-                      "all .35s cubic-bezier(.22,1,.36,1)",
-                  }}
-                />
-              ))}
-            </div>
-
-            <div
-              style={{
-                display: "flex",
                 gap: 8,
+                color: slides[activeSlide].accent,
+                fontSize: 10,
+                fontWeight: 800,
+                marginBottom: 18,
+                textShadow: "0 2px 18px rgba(0,0,0,.65)",
               }}
             >
-              <GlassButton
-                aria-label="Previous slide"
-                onClick={() => {
-                  setDirection(-1);
-                  setActiveSlide(
-                    (prev) =>
-                      (prev - 1 + slides.length) %
-                      slides.length
-                  );
-                }}
-                style={{
-                  width: 40,
-                  height: 36,
-                  padding: 0,
-                  background: "rgba(2,6,4,.48)",
-                  backdropFilter: "blur(10px)",
-                  border:
-                    "1px solid rgba(255,255,255,.14)",
-                  fontSize: 18,
-                }}
-              >
-                ←
-              </GlassButton>
+              {slides[activeSlide].subtitle}
+            </motion.div>
 
-              <GlassButton
-                aria-label="Next slide"
+            <div className="threat-title-wrap">
+              {(slides[activeSlide].titleLines || [slides[activeSlide].title]).map(
+                (line, lineIndex) => (
+                  <motion.div
+                    key={`${slides[activeSlide].title}-${lineIndex}`}
+                    className="threat-title-line"
+                    initial={{
+                      opacity: 0,
+                      y: 62,
+                      clipPath: "inset(0 0 100% 0)",
+                    }}
+                    animate={{
+                      opacity: 1,
+                      y: 0,
+                      clipPath: "inset(0 0 0% 0)",
+                    }}
+                    transition={{
+                      duration: 0.82,
+                      delay: 0.16 + lineIndex * 0.10,
+                      ease: [0.22, 1, 0.36, 1],
+                    }}
+                    style={{
+                      color:
+                        lineIndex === 1
+                          ? `color-mix(in srgb, ${slides[activeSlide].accent} 82%, #f8fafc)`
+                          : "#f8fafc",
+                      textShadow: "0 10px 45px rgba(0,0,0,.58)",
+                    }}
+                  >
+                    {line.split("").map((char, charIndex) => (
+                      <motion.span
+                        key={`${line}-${charIndex}`}
+                        className="threat-title-char"
+                        initial={{
+                          opacity: 0,
+                          y: 42,
+                          rotateX: -70,
+                          scale: 0.82,
+                          filter: "blur(7px)",
+                        }}
+                        animate={{
+                          opacity: 1,
+                          y: 0,
+                          rotateX: 0,
+                          scale: 1,
+                          filter: "blur(0px)",
+                        }}
+                        transition={{
+                          duration: 0.68,
+                          delay:
+                            0.22 +
+                            lineIndex * 0.12 +
+                            Math.min(charIndex, 13) * 0.018,
+                          ease: [0.22, 1, 0.36, 1],
+                        }}
+                        whileHover={{
+                          y: -8,
+                          scale: 1.035,
+                          color: slides[activeSlide].accent,
+                          textShadow: `0 0 24px ${slides[activeSlide].accent}38`,
+                        }}
+                        style={{
+                          color:
+                            char === " "
+                              ? "inherit"
+                              : undefined,
+                          cursor: char === " " ? "default" : "default",
+                        }}
+                      >
+                        {char === " " ? "\u00A0" : char}
+                      </motion.span>
+                    ))}
+                  </motion.div>
+                )
+              )}
+
+              <motion.div
+                className="threat-title-underline"
+                initial={{ scaleX: 0, transformOrigin: "left" }}
+                animate={{ scaleX: 1 }}
+                transition={{ duration: 0.65, delay: 0.68, ease: [0.22, 1, 0.36, 1] }}
+                style={{
+                  background: `linear-gradient(90deg, ${slides[activeSlide].accent}70, rgba(255,255,255,.10))`,
+                }}
+              />
+            </div>
+
+            <motion.p
+              initial={{ opacity: 0, y: 18 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6, delay: 0.58 }}
+              style={{
+                maxWidth: 520,
+                margin: "32px 0 0",
+                color: "rgba(248,250,252,.86)",
+                fontSize: 14,
+                lineHeight: 1.7,
+                textShadow: "0 3px 20px rgba(0,0,0,.72)",
+              }}
+            >
+              {slides[activeSlide].description}
+            </motion.p>
+
+            <motion.div
+              initial={{ opacity: 0, y: 14, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              transition={{ duration: 0.55, delay: 0.72 }}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                marginTop: 20,
+                padding: "9px 12px",
+                borderRadius: 999,
+                background: "rgba(2,6,4,.44)",
+                border: `1px solid ${slides[activeSlide].accent}38`,
+                color: "#f8fafc",
+                fontSize: 9,
+                fontWeight: 800,
+                letterSpacing: ".12em",
+                backdropFilter: "blur(11px)",
+                boxShadow: `0 12px 32px rgba(0,0,0,.18), inset 0 0 0 1px ${slides[activeSlide].accent}10`,
+              }}
+            >
+              <Eye
+                size={13}
+                color={slides[activeSlide].accent}
+              />
+              REAL-TIME CLASSIFICATION
+            </motion.div>
+          </motion.div>
+        </motion.div>
+
+        <div
+          style={{
+            position: "absolute",
+            left: 28,
+            right: 20,
+            bottom: 20,
+            zIndex: 15,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 14,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "7px 9px",
+              borderRadius: 999,
+              background: "rgba(2,6,4,.34)",
+              border: "1px solid rgba(255,255,255,.08)",
+              backdropFilter: "blur(10px)",
+            }}
+          >
+            {slides.map((slide, index) => (
+              <button
+                key={index}
+                className="threat-dot-button"
+                data-active={index === activeSlide}
+                aria-label={`Go to ${slide.title} slide`}
                 onClick={() => {
-                  setDirection(1);
-                  setActiveSlide(
-                    (prev) =>
-                      (prev + 1) % slides.length
-                  );
+                  if (index === activeSlide) return;
+                  setDirection(index > activeSlide ? 1 : -1);
+                  setActiveSlide(index);
                 }}
                 style={{
-                  width: 40,
-                  height: 36,
+                  position: "relative",
+                  width: index === activeSlide ? 34 : 8,
+                  height: 7,
                   padding: 0,
-                  background: "rgba(2,6,4,.48)",
-                  backdropFilter: "blur(10px)",
-                  border:
-                    "1px solid rgba(255,255,255,.14)",
-                  fontSize: 18,
+                  border: "none",
+                  borderRadius: 999,
+                  background:
+                    index === activeSlide
+                      ? slide.accent
+                      : "rgba(255,255,255,.28)",
+                  color: slide.accent,
+                  boxShadow:
+                    index === activeSlide
+                      ? `0 0 16px ${slide.accent}70`
+                      : "none",
+                  cursor: "pointer",
+                  transition: "all .45s cubic-bezier(.22,1,.36,1)",
                 }}
-              >
-                →
-              </GlassButton>
-            </div>
+              />
+            ))}
           </div>
-        </motion.div>
-      </div>
+
+          <div style={{ display: "flex", gap: 8 }}>
+            <GlassButton
+              aria-label="Previous slide"
+              className="threat-nav-button"
+              onClick={() => {
+                setDirection(-1);
+                setActiveSlide(
+                  (prev) => (prev - 1 + slides.length) % slides.length
+                );
+              }}
+              style={{
+                width: 44,
+                height: 40,
+                padding: 0,
+                borderRadius: 11,
+                background: "rgba(2,6,4,.42)",
+                backdropFilter: "blur(12px)",
+                border: `1px solid ${slides[activeSlide].accent}34`,
+                color: "#fff",
+                fontSize: 18,
+              }}
+            >
+              ←
+            </GlassButton>
+
+            <GlassButton
+              aria-label="Next slide"
+              className="threat-nav-button"
+              onClick={() => {
+                setDirection(1);
+                setActiveSlide(
+                  (prev) => (prev + 1) % slides.length
+                );
+              }}
+              style={{
+                width: 44,
+                height: 40,
+                padding: 0,
+                borderRadius: 11,
+                background: `linear-gradient(135deg, ${slides[activeSlide].accent}20, rgba(2,6,4,.46))`,
+                backdropFilter: "blur(12px)",
+                border: `1px solid ${slides[activeSlide].accent}55`,
+                color: "#fff",
+                fontSize: 18,
+                boxShadow: `0 0 22px ${slides[activeSlide].accent}10`,
+              }}
+            >
+              →
+            </GlassButton>
+          </div>
+        </div>
+      </motion.div>
     </motion.div>
   </AnimatePresence>
 </div>
