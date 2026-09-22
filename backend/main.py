@@ -1,2464 +1,717 @@
-import os
-import sys
-import io
-import cv2
-import json
-import base64
-import tempfile
-import shutil
-import datetime
-import asyncio
-from pathlib import Path
-from typing import Optional, List, Dict
+"""Wildlife Sentinel API. Start from project root: python -m uvicorn backend.main:app."""
 
+import asyncio
+import io
+import logging
+import math
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
+import cv2
+import httpx
 from fastapi import (
     FastAPI,
-    UploadFile,
+    Depends,
     File,
     Form,
     HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
     WebSocket,
     WebSocketDisconnect,
-    Depends,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from PIL import Image
-import numpy as np
-import uvicorn
+from fastapi.responses import FileResponse, JSONResponse
+from pydantic import ValidationError
+from PIL import Image, ImageDraw
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from starlette.concurrency import run_in_threadpool
+import json
+import sentinel_config as config
+from ai_service.vision import vision
+from ai_service.governor import AIComputeGovernor
+from ai_service.heatmap import RiskHeatmapEngine
+from ai_service.multi_camera import MultiCameraCorrelator
+from ai_service.xai import generate_explainable_alert
+from ai_service.evidence import EvidenceTimeline
+from backend.hard_negatives import HardNegativeManager
+from backend.database import store, utcnow
+from backend.schemas import SensorInput, Telemetry, SettingsPayload, Risk, RangerFeedbackPayload
+from backend.security import require, identity, issue_ticket, consume_ticket, rate_key
+from backend.media import image_upload, read_upload, temporary_file
+from backend.middleware import BodyLimitMiddleware
+from backend.realtime import manager
+from backend.dispatch import dispatch_worker
+from backend.cameras import camera_worker, camera_status, heartbeat, validate_endpoint
 
-from sqlalchemy import (
-    create_engine,
-    Column,
-    String,
-    Float,
-    Boolean,
-    DateTime,
-    Text,
-    event,
+governor = AIComputeGovernor()
+heatmap_engine = RiskHeatmapEngine()
+multi_camera_correlator = MultiCameraCorrelator()
+hard_negative_mgr = HardNegativeManager(store.connection)
+evidence_timeline = EvidenceTimeline()
+
+log = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
 )
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session
+limiter = Limiter(key_func=rate_key, default_limits=["120/minute"])
+read_access = Depends(require(service=True))
+operate = Depends(require("operator", service=True))
+admin = Depends(require("admin"))
+inference_slots = asyncio.Semaphore(2)
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-
-from backend.dispatch import send_critical_alert
-from ai_service.audio.yamnet_classifier import (
-    predict_yamnet_threat as predict_audio_threat,
-)
-
-
-# ============================================================
-# DATABASE
-# ============================================================
-
-DATABASE_FILE = PROJECT_ROOT / "wildlife_sentinel.db"
-DATABASE_URL = f"sqlite:///{DATABASE_FILE}"
-
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={
-        "check_same_thread": False,
-        "timeout": 15,
-    },
-)
+@asynccontextmanager
+async def lifespan(app):
+    await run_in_threadpool(store.initialize)
+    await run_in_threadpool(vision.initialize)
+    tasks = [asyncio.create_task(dispatch_worker(store))]
+    tasks += [
+        asyncio.create_task(camera_worker(c, store, process_camera))
+        for c in config.CAMERAS
+        if c["id"] in config.CAMERA_ENDPOINTS
+    ]
+    yield
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
 
 
-@event.listens_for(engine, "connect")
-def set_sqlite_pragma(dbapi_connection, connection_record):
-    cursor = dbapi_connection.cursor()
-
-    cursor.execute("PRAGMA journal_mode=WAL;")
-    cursor.execute("PRAGMA synchronous=NORMAL;")
-    cursor.execute("PRAGMA foreign_keys=ON;")
-
-    cursor.close()
-
-
-SessionLocal = sessionmaker(
-    autocommit=False,
-    autoflush=False,
-    bind=engine,
-)
-
-Base = declarative_base()
-
-
-class AlertRecord(Base):
-    __tablename__ = "alerts"
-
-    id = Column(
-        String,
-        primary_key=True,
-        index=True,
-    )
-
-    camera_id = Column(
-        String,
-        index=True,
-    )
-
-    timestamp = Column(
-        DateTime,
-        default=datetime.datetime.utcnow,
-        index=True,
-    )
-
-    latitude = Column(Float)
-    longitude = Column(Float)
-
-    threat_level = Column(
-        String,
-        index=True,
-    )
-
-    detections = Column(Text)
-
-    resolved = Column(
-        Boolean,
-        default=False,
-        index=True,
-    )
-
-    annotated_image = Column(
-        Text,
-        nullable=True,
-    )
-
-
-Base.metadata.create_all(bind=engine)
-
-
-def get_db():
-    db = SessionLocal()
-
-    try:
-        yield db
-    finally:
-        db.close()
-
-
-# ============================================================
-# FASTAPI
-# ============================================================
-
-app = FastAPI(
-    title="Wildlife Sentinel Enterprise API",
-    description=(
-        "Real-time multi-modal edge AI vision "
-        "and acoustic surveillance platform"
-    ),
-    version="5.0.0",
-)
-
-
+app = FastAPI(title="Wildlife Sentinel", version="6.0.0", lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
+app.add_middleware(BodyLimitMiddleware, max_bytes=config.MAX_VIDEO_BYTES + 1024 * 1024)
 app.add_middleware(
     CORSMiddleware,
-
-    # Fine for the local hackathon/demo environment.
-    allow_origins=["*"],
-
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=config.FRONTEND_ORIGINS,
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"],
+    expose_headers=["X-Next-Cursor"],
 )
 
 
-# ============================================================
-# WEBSOCKET MANAGER
-# ============================================================
-
-class ConnectionManager:
-
-    def __init__(self):
-        self.active_connections: List[WebSocket] = []
+@app.exception_handler(Exception)
+async def unexpected_error(request, exc):
+    log.error("request_failed path=%s", request.url.path, exc_info=exc)
+    return JSONResponse({"detail": "Internal service error"}, status_code=500)
 
 
-    async def connect(
-        self,
-        websocket: WebSocket,
-    ):
-        await websocket.accept()
+def sensor(camera_id, latitude, longitude):
+    try:
+        return SensorInput(camera_id=camera_id, latitude=latitude, longitude=longitude)
+    except ValidationError:
+        raise HTTPException(422, "Invalid camera or coordinates") from None
 
-        self.active_connections.append(
-            websocket
+
+def jpeg(image, detections):
+    annotated = image.copy()
+    draw = ImageDraw.Draw(annotated)
+    for detection in detections:
+        if detection["bbox"]:
+            draw.rectangle(detection["bbox"], outline="red", width=2)
+            draw.text(detection["bbox"][:2], detection["label"], fill="red")
+    buffer = io.BytesIO()
+    annotated.save(buffer, format="JPEG", quality=80)
+    return buffer.getvalue()
+
+
+async def ingest(payload, image=None, event_time=None):
+    alert, created, publish = await run_in_threadpool(
+        store.ingest, payload, image, event_time
+    )
+    heartbeat(
+        payload.camera_id,
+        "DEGRADED"
+        if payload.threat_level
+        in {"MODEL_ERROR", "SENSOR_ERROR", "UNAVAILABLE", "UNKNOWN", "INPUT_ERROR"}
+        else "ONLINE",
+    )
+    receipt = {
+        "accepted": True,
+        "persisted": alert is not None,
+        "alert_id": alert["id"] if alert else None,
+        "created": created,
+        "broadcast_count": 0,
+        "frontend_notified": False,
+        "dispatch_status": "not_required",
+        "alert": alert,
+    }
+    if alert and alert["threat_level"] in {"HIGH", "CRITICAL"}:
+        receipt["dispatch_status"] = (
+            "queued" if config.DISCORD_WEBHOOK_URL else "unconfigured"
         )
-
-
-    def disconnect(
-        self,
-        websocket: WebSocket,
-    ):
-        if websocket in self.active_connections:
-            self.active_connections.remove(
-                websocket
+    if publish:
+        receipt.update(
+            await manager.broadcast(
+                {"type": "NEW_ALERT" if created else "UPDATE_ALERT", "payload": alert}
             )
-
-
-    async def broadcast(
-        self,
-        message: dict,
-    ):
-        for connection in list(
-            self.active_connections
-        ):
-            try:
-                await connection.send_json(
-                    message
-                )
-
-            except Exception:
-                self.disconnect(
-                    connection
-                )
-
-
-manager = ConnectionManager()
-
-
-# ============================================================
-# YOLO
-# ============================================================
-
-try:
-    from ultralytics import YOLO
-
-    model = YOLO("yolov8x.pt")
-
-except Exception:
-
-    try:
-        from ultralytics import YOLO
-
-        model = YOLO("yolov8n.pt")
-
-    except Exception:
-        model = None
-
-
-THREAT_CLASSES = {
-    "person",
-    "car",
-    "truck",
-    "motorcycle",
-    "bus",
-}
-
-
-WILDLIFE_CLASSES = {
-    "bird",
-    "cat",
-    "dog",
-    "horse",
-    "sheep",
-    "cow",
-    "elephant",
-    "bear",
-    "zebra",
-    "giraffe",
-}
-
-
-WILDLIFE_REMAP = {
-    "sheep": "deer / antelope",
-    "cow": "bison / wild cattle",
-    "horse": "horse / zebra",
-    "dog": "wild dog / wolf",
-}
-
-
-# ============================================================
-# SETTINGS
-# ============================================================
-
-system_settings = {
-
-    "confidence_threshold": 0.45,
-
-    "geofence_core_radius_m": 800,
-
-    "ranger_hq": {
-        "name": "Sector 4 Ranger Station",
-        "lat": 12.9700,
-        "lng": 79.1550,
-    },
-
-    "discord_webhook_url": os.getenv(
-        "DISCORD_WEBHOOK_URL",
-        "",
-    ),
-
-    "remote_streams": {
-        "COMPUTER_1": "",
-        "COMPUTER_2": "",
-        "COMPUTER_3": "",
-    },
-}
-
-
-camera_nodes_db = [
-
-    {
-        "id": "COMPUTER_1",
-        "name": (
-            "Remote Laptop 1 "
-            "(North Outpost)"
-        ),
-        "location": {
-            "lat": 12.9735,
-            "lng": 79.1585,
-        },
-        "status": "ONLINE",
-        "battery_pct": 92,
-        "signal_dbm": -68,
-    },
-
-    {
-        "id": "COMPUTER_2",
-        "name": (
-            "Remote Laptop 2 "
-            "(South River Crossing)"
-        ),
-        "location": {
-            "lat": 12.9642,
-            "lng": 79.1512,
-        },
-        "status": "ONLINE",
-        "battery_pct": 84,
-        "signal_dbm": -72,
-    },
-
-    {
-        "id": "COMPUTER_3",
-        "name": (
-            "Remote Laptop 3 "
-            "(East Migration Path)"
-        ),
-        "location": {
-            "lat": 12.9698,
-            "lng": 79.1660,
-        },
-        "status": "ONLINE",
-        "battery_pct": 78,
-        "signal_dbm": -64,
-    },
-]
-
-
-# ============================================================
-# IMAGE ANNOTATION
-# ============================================================
-
-def draw_annotations(
-    image_np: np.ndarray,
-    detections: list,
-) -> str:
-
-    img_bgr = cv2.cvtColor(
-        image_np,
-        cv2.COLOR_RGB2BGR,
-    )
-
-
-    for det in detections:
-
-        bbox = [
-            int(coord)
-            for coord in det["bbox"]
-        ]
-
-        label = det["label"]
-        confidence = det["confidence"]
-
-
-        color = (
-            (0, 0, 230)
-            if label.lower()
-            in THREAT_CLASSES
-            else (74, 222, 128)
         )
+    return receipt
 
 
-        cv2.rectangle(
-            img_bgr,
-            (bbox[0], bbox[1]),
-            (bbox[2], bbox[3]),
-            color,
-            2,
+async def process_camera(camera, image):
+    async with inference_slots:
+        settings = await run_in_threadpool(store.settings)
+        from backend.dispatch import evaluate_geofence
+
+        loc = camera.get("location")
+        if not loc:
+            raise ValueError("Remote camera location is required")
+        geofence_status = evaluate_geofence(loc["lat"], loc["lng"], settings)
+        prediction = await run_in_threadpool(
+            vision.predict,
+            image,
+            threshold=settings["confidence_threshold"],
+            camera_id=camera["id"],
+            geofence_status=geofence_status,
         )
-
-
-        caption = (
-            f"{label.upper()} "
-            f"{int(confidence * 100)}%"
+        payload = Telemetry(
+            camera_id=camera["id"],
+            latitude=loc["lat"],
+            longitude=loc["lng"],
+            threat_level=prediction["risk_level"],
+            detections=prediction["detections"],
+            vision_confidence=prediction["confidence"],
+            model_versions={"vision": prediction["model_version"]},
         )
-
-
-        (w, h), _ = cv2.getTextSize(
-            caption,
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            2,
+        receipt = await ingest(
+            payload, await run_in_threadpool(jpeg, image, prediction["detections"])
         )
+        return receipt
 
-
-        cv2.rectangle(
-            img_bgr,
-            (
-                bbox[0],
-                bbox[1] - 20,
-            ),
-            (
-                bbox[0] + w + 6,
-                bbox[1],
-            ),
-            color,
-            -1,
-        )
-
-
-        cv2.putText(
-            img_bgr,
-            caption,
-            (
-                bbox[0] + 3,
-                bbox[1] - 5,
-            ),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            (0, 0, 0),
-            1,
-            cv2.LINE_AA,
-        )
-
-
-    _, buffer = cv2.imencode(
-        ".jpg",
-        img_bgr,
-    )
-
-
-    return (
-        "data:image/jpeg;base64,"
-        + base64.b64encode(
-            buffer
-        ).decode("utf-8")
-    )
-
-
-# ============================================================
-# REMOTE CAMERA WORKER
-# ============================================================
-
-async def analyze_remote_streams_worker():
-
-    while True:
-
-        await asyncio.sleep(2.0)
-
-
-        streams = system_settings.get(
-            "remote_streams",
-            {},
-        )
-
-
-        for cam_id, stream_url in streams.items():
-
-            if (
-                not stream_url
-                or not stream_url.startswith(
-                    "http"
-                )
-            ):
-                continue
-
-
-            try:
-
-                cap = cv2.VideoCapture(
-                    stream_url
-                )
-
-                ret, frame = cap.read()
-
-                cap.release()
-
-
-                if (
-                    not ret
-                    or frame is None
-                ):
-                    continue
-
-
-                frame_rgb = cv2.cvtColor(
-                    frame,
-                    cv2.COLOR_BGR2RGB,
-                )
-
-
-                pil_img = Image.fromarray(
-                    frame_rgb
-                )
-
-
-                detections = []
-
-                threat_level = "LOW"
-
-
-                if model is not None:
-
-                    results = model(
-                        pil_img,
-                        conf=system_settings[
-                            "confidence_threshold"
-                        ],
-                    )
-
-
-                    for box in results[0].boxes:
-
-                        cls_id = int(
-                            box.cls[0].item()
-                        )
-
-
-                        raw_label = (
-                            model.names[
-                                cls_id
-                            ]
-                        )
-
-
-                        conf = float(
-                            box.conf[0].item()
-                        )
-
-
-                        bbox = [
-                            float(coord)
-                            for coord
-                            in box.xyxy[
-                                0
-                            ].tolist()
-                        ]
-
-
-                        label = (
-                            WILDLIFE_REMAP.get(
-                                raw_label,
-                                raw_label,
-                            )
-                        )
-
-
-                        if (
-                            raw_label
-                            in THREAT_CLASSES
-                        ):
-
-                            threat_level = (
-                                "CRITICAL"
-                                if raw_label
-                                == "person"
-                                else "HIGH"
-                            )
-
-
-                        elif (
-                            raw_label
-                            in WILDLIFE_CLASSES
-
-                            or raw_label
-                            in WILDLIFE_REMAP
-                        ):
-
-                            if (
-                                threat_level
-                                == "LOW"
-                            ):
-                                threat_level = (
-                                    "MONITORED"
-                                )
-
-
-                        detections.append(
-                            {
-                                "label":
-                                    label,
-
-                                "confidence":
-                                    round(
-                                        conf,
-                                        3,
-                                    ),
-
-                                "bbox":
-                                    bbox,
-                            }
-                        )
-
-
-                if detections:
-
-                    annotated_b64 = (
-                        draw_annotations(
-                            frame_rgb,
-                            detections,
-                        )
-                    )
-
-
-                    alert_id = (
-                        f"remote_"
-                        f"{cam_id.lower()}_"
-                        f"{int(datetime.datetime.utcnow().timestamp() * 1000)}"
-                    )
-
-
-                    node_info = next(
-                        (
-                            c
-                            for c
-                            in camera_nodes_db
-                            if c["id"]
-                            == cam_id
-                        ),
-                        None,
-                    )
-
-
-                    lat = (
-                        node_info[
-                            "location"
-                        ]["lat"]
-
-                        if node_info
-
-                        else 12.9698
-                    )
-
-
-                    lng = (
-                        node_info[
-                            "location"
-                        ]["lng"]
-
-                        if node_info
-
-                        else 79.1559
-                    )
-
-
-                    db = SessionLocal()
-
-
-                    try:
-
-                        new_alert = (
-                            AlertRecord(
-                                id=alert_id,
-
-                                camera_id=
-                                    cam_id,
-
-                                timestamp=
-                                    datetime.datetime.utcnow(),
-
-                                latitude=
-                                    lat,
-
-                                longitude=
-                                    lng,
-
-                                threat_level=
-                                    threat_level,
-
-                                detections=
-                                    json.dumps(
-                                        detections
-                                    ),
-
-                                resolved=
-                                    False,
-
-                                annotated_image=
-                                    annotated_b64,
-                            )
-                        )
-
-
-                        db.add(
-                            new_alert
-                        )
-
-                        db.commit()
-
-                        db.refresh(
-                            new_alert
-                        )
-
-
-                    finally:
-
-                        db.close()
-
-
-                    payload = {
-
-                        "id":
-                            alert_id,
-
-                        "camera_id":
-                            cam_id,
-
-                        "timestamp":
-                            (
-                                new_alert
-                                .timestamp
-                                .isoformat()
-                                + "Z"
-                            ),
-
-                        "location": {
-                            "lat":
-                                lat,
-
-                            "lng":
-                                lng,
-                        },
-
-                        "detections":
-                            detections,
-
-                        "threat_level":
-                            threat_level,
-
-                        "resolved":
-                            False,
-
-                        "annotated_image":
-                            annotated_b64,
-                    }
-
-
-                    await manager.broadcast(
-                        {
-                            "type":
-                                "NEW_ALERT",
-
-                            "payload":
-                                payload,
-
-                            "data":
-                                payload,
-                        }
-                    )
-
-
-                    if (
-                        threat_level
-                        in [
-                            "CRITICAL",
-                            "HIGH",
-                        ]
-                    ):
-
-                        send_critical_alert(
-                            cam_id,
-                            threat_level,
-                            detections,
-                            {
-                                "lat": lat,
-                                "lng": lng,
-                            },
-                        )
-
-
-            except Exception as e:
-
-                print(
-                    f"[REMOTE CAMERA ERROR] "
-                    f"{cam_id}: "
-                    f"{type(e).__name__}: "
-                    f"{e}"
-                )
-
-
-# ============================================================
-# STARTUP
-# ============================================================
-
-@app.on_event("startup")
-async def startup_event():
-
-    asyncio.create_task(
-        analyze_remote_streams_worker()
-    )
-
-
-# ============================================================
-# WEBSOCKET
-# ============================================================
-
-@app.websocket("/ws/alerts")
-async def websocket_alerts(
-    websocket: WebSocket,
-):
-
-    await manager.connect(
-        websocket
-    )
-
-
-    try:
-
-        while True:
-
-            await websocket.receive_text()
-
-
-    except WebSocketDisconnect:
-
-        manager.disconnect(
-            websocket
-        )
-
-
-    except Exception:
-
-        manager.disconnect(
-            websocket
-        )
-
-
-# ============================================================
-# HEALTH
-# ============================================================
 
 @app.get("/health")
-def health_check():
-
+def health():
     return {
-
-        "status":
-            "healthy",
-
-        "service":
-            "Wildlife Sentinel API",
-
-        "timestamp":
-            (
-                datetime.datetime
-                .utcnow()
-                .isoformat()
-                + "Z"
-            ),
+        "status": "ready" if vision.ready else "degraded",
+        "vision_ready": vision.ready,
+        "vision_model_version": vision.version,
+        "nano_model_version": vision.nano_version,
+        "escalation_model_version": vision.escalation_version,
+        "vision_mode": config.VISION_MODE,
+        "hardware_backend": vision.hardware_backend,
+        "service": "backend",
     }
 
 
-# ============================================================
-# IMAGE DETECTION
-# ============================================================
+@app.post("/api/auth/ws-ticket", dependencies=[Depends(require())])
+@limiter.limit("30/minute")
+def websocket_ticket(request: Request):
+    return {"ticket": issue_ticket(), "expires_in": 30}
 
-@app.post("/api/detect")
+
+@app.get("/api/auth/me")
+def current_identity(role=Depends(identity)):
+    return {"role": role}
+
+
+@app.websocket("/ws/alerts")
+async def websocket_alerts(websocket: WebSocket):
+    origin = websocket.headers.get("origin")
+    if (origin and origin not in config.FRONTEND_ORIGINS) or not consume_ticket(
+        websocket.query_params.get("ticket", "")
+    ):
+        await websocket.close(code=1008)
+        return
+    await manager.connect(websocket)
+    try:
+        while True:
+            message = await websocket.receive_json()
+            if message.get("type") == "ACK":
+                manager.acknowledge(websocket, message.get("event_id"))
+    except (WebSocketDisconnect, ValueError, TypeError):
+        pass
+    finally:
+        manager.disconnect(websocket)
+
+
+@app.post("/api/edge/telemetry", dependencies=[operate])
+@limiter.limit("60/minute")
+async def telemetry(request: Request, payload: Telemetry):
+    return await ingest(payload)
+
+
+@app.post("/api/detect", dependencies=[operate])
+@limiter.limit("45/minute")
 async def detect_feed(
-
+    request: Request,
     image: UploadFile = File(...),
-
-    camera_id: str = Form(
-        "HOST_LAPTOP_CAM"
-    ),
-
-    latitude: float = Form(
-        12.9698
-    ),
-
-    longitude: float = Form(
-        79.1559
-    ),
-
-    db: Session = Depends(
-        get_db
-    ),
-
+    camera_id: str = Form("CAM_MANUAL_FEED"),
+    latitude: float = Form(12.9698),
+    longitude: float = Form(79.1559),
+    persist: bool = Form(True),
+    force_escalation: bool = Form(False),
 ):
+    node = sensor(camera_id, latitude, longitude)
+    async with inference_slots:
+        decoded = await run_in_threadpool(image_upload, image)
+        settings = await run_in_threadpool(store.settings)
+        from backend.dispatch import evaluate_geofence
 
-    try:
-
-        image_bytes = (
-            await image.read()
+        geofence_status = evaluate_geofence(node.latitude, node.longitude, settings)
+        prediction = await run_in_threadpool(
+            vision.predict,
+            decoded,
+            threshold=settings["confidence_threshold"],
+            camera_id=camera_id,
+            geofence_status=geofence_status,
+            skip_motion_check=True,
+            force_escalation=force_escalation,
         )
-
-
-        pil_img = (
-            Image.open(
-                io.BytesIO(
-                    image_bytes
-                )
+        payload = Telemetry(
+            **node.model_dump(),
+            threat_level=prediction["risk_level"],
+            detections=prediction["detections"],
+            vision_confidence=prediction["confidence"],
+            model_versions={"vision": prediction["model_version"]},
+        )
+        receipt = (
+            await ingest(
+                payload,
+                await run_in_threadpool(jpeg, decoded, prediction["detections"]),
             )
-            .convert("RGB")
+            if persist
+            else {"persisted": False, "frontend_notified": False, "alert_id": None}
         )
-
-
-        img_np = np.array(
-            pil_img
-        )
-
-
-        detections = []
-
-        threat_level = "LOW"
-
-
-        if model is not None:
-
-            results = model(
-                pil_img,
-                conf=system_settings[
-                    "confidence_threshold"
-                ],
-            )
-
-
-            for box in results[0].boxes:
-
-                cls_id = int(
-                    box.cls[0].item()
-                )
-
-
-                raw_label = (
-                    model.names[
-                        cls_id
-                    ]
-                )
-
-
-                confidence = float(
-                    box.conf[0].item()
-                )
-
-
-                bbox = [
-                    float(coord)
-                    for coord
-                    in box.xyxy[
-                        0
-                    ].tolist()
-                ]
-
-
-                label = (
-                    WILDLIFE_REMAP.get(
-                        raw_label,
-                        raw_label,
-                    )
-                )
-
-
-                if (
-                    raw_label
-                    in THREAT_CLASSES
-                ):
-
-                    threat_level = (
-                        "CRITICAL"
-                        if raw_label
-                        == "person"
-                        else "HIGH"
-                    )
-
-
-                elif (
-                    raw_label
-                    in WILDLIFE_CLASSES
-
-                    or raw_label
-                    in WILDLIFE_REMAP
-                ):
-
-                    if (
-                        threat_level
-                        == "LOW"
-                    ):
-
-                        threat_level = (
-                            "MONITORED"
-                        )
-
-
-                detections.append(
-                    {
-
-                        "label":
-                            label,
-
-                        "confidence":
-                            round(
-                                confidence,
-                                3,
-                            ),
-
-                        "bbox":
-                            bbox,
-                    }
-                )
-
-
-        annotated_image_b64 = (
-
-            draw_annotations(
-                img_np,
-                detections,
-            )
-
-            if detections
-
-            else None
-        )
-
-
-        alert_id = (
-            f"alert_"
-            f"{int(datetime.datetime.utcnow().timestamp() * 1000)}"
-        )
-
-
-        new_alert = AlertRecord(
-
-            id=alert_id,
-
-            camera_id=
-                camera_id,
-
-            timestamp=
-                datetime.datetime.utcnow(),
-
-            latitude=
-                latitude,
-
-            longitude=
-                longitude,
-
-            threat_level=
-                threat_level,
-
-            detections=
-                json.dumps(
-                    detections
-                ),
-
-            resolved=
-                False,
-
-            annotated_image=
-                annotated_image_b64,
-        )
-
-
-        db.add(
-            new_alert
-        )
-
-        db.commit()
-
-        db.refresh(
-            new_alert
-        )
-
-
-        payload = {
-
-            "id":
-                alert_id,
-
-            "camera_id":
-                camera_id,
-
-            "timestamp":
-                (
-                    new_alert
-                    .timestamp
-                    .isoformat()
-                    + "Z"
-                ),
-
-            "location": {
-
-                "lat":
-                    latitude,
-
-                "lng":
-                    longitude,
-            },
-
-            "detections":
-                detections,
-
-            "threat_level":
-                threat_level,
-
-            "resolved":
-                False,
-
-            "annotated_image":
-                annotated_image_b64,
+        return {
+            **prediction,
+            "threat_level": prediction["risk_level"],
+            **receipt,
+            "annotated_image": None,
         }
 
 
-        await manager.broadcast(
-            {
-
-                "type":
-                    "NEW_ALERT",
-
-                "payload":
-                    payload,
-
-                "data":
-                    payload,
-            }
-        )
-
-
-        if (
-            threat_level
-            in [
-                "CRITICAL",
-                "HIGH",
-            ]
-        ):
-
-            send_critical_alert(
-
-                camera_id,
-
-                threat_level,
-
-                detections,
-
-                {
-                    "lat":
-                        latitude,
-
-                    "lng":
-                        longitude,
-                },
-            )
-
-
-        return payload
-
-
-    except Exception as e:
-
-        db.rollback()
-
-        raise HTTPException(
-            status_code=500,
-            detail=str(e),
-        )
-
-
-# ============================================================
-# VIDEO DETECTION
-# ============================================================
-
-@app.post("/api/detect/video")
-async def detect_video(
-
-    video: UploadFile = File(...),
-
-    camera_id: str = Form(
-        "CAM_VIDEO_CCTV"
-    ),
-
-    latitude: float = Form(
-        12.9680
-    ),
-
-    longitude: float = Form(
-        79.1620
-    ),
-
-    sample_rate: int = Form(
-        1
-    ),
-
-    db: Session = Depends(
-        get_db
-    ),
-):
-
-    sample_rate = max(
-        1,
-        sample_rate,
-    )
-
-
-    with tempfile.NamedTemporaryFile(
-        delete=False,
-        suffix=".mp4",
-    ) as tmp:
-
-        shutil.copyfileobj(
-            video.file,
-            tmp,
-        )
-
-        tmp_path = (
-            tmp.name
-        )
-
-
-    cap = cv2.VideoCapture(
-        tmp_path
-    )
-
-
-    fps = (
-        cap.get(
-            cv2.CAP_PROP_FPS
-        )
-        or 25
-    )
-
-
-    frame_interval = max(
-        1,
-        int(
-            fps
-            * sample_rate
-        ),
-    )
-
-
-    frame_count = 0
-
-    video_summary = []
-
-
-    try:
-
-        while cap.isOpened():
-
-            ret, frame = (
-                cap.read()
-            )
-
-
-            if not ret:
-                break
-
-
-            if (
-                frame_count
-                % frame_interval
-                == 0
-            ):
-
-                timestamp_sec = round(
-                    frame_count
-                    / fps,
-                    1,
-                )
-
-
-                frame_rgb = (
-                    cv2.cvtColor(
-                        frame,
-                        cv2.COLOR_BGR2RGB,
-                    )
-                )
-
-
-                pil_img = (
-                    Image.fromarray(
-                        frame_rgb
-                    )
-                )
-
-
-                detections = []
-
-                threat_level = "LOW"
-
-
-                if model is not None:
-
-                    results = model(
-                        pil_img,
-                        conf=system_settings[
-                            "confidence_threshold"
-                        ],
-                    )
-
-
-                    for box in results[0].boxes:
-
-                        cls_id = int(
-                            box.cls[
-                                0
-                            ].item()
-                        )
-
-
-                        raw_label = (
-                            model.names[
-                                cls_id
-                            ]
-                        )
-
-
-                        conf = float(
-                            box.conf[
-                                0
-                            ].item()
-                        )
-
-
-                        bbox = [
-                            float(c)
-                            for c
-                            in box.xyxy[
-                                0
-                            ].tolist()
-                        ]
-
-
-                        label = (
-                            WILDLIFE_REMAP
-                            .get(
-                                raw_label,
-                                raw_label,
-                            )
-                        )
-
-
-                        if (
-                            raw_label
-                            in THREAT_CLASSES
-                        ):
-
-                            threat_level = (
-                                "CRITICAL"
-
-                                if raw_label
-                                == "person"
-
-                                else "HIGH"
-                            )
-
-
-                        elif (
-                            raw_label
-                            in WILDLIFE_CLASSES
-
-                            or raw_label
-                            in WILDLIFE_REMAP
-                        ):
-
-                            if (
-                                threat_level
-                                == "LOW"
-                            ):
-
-                                threat_level = (
-                                    "MONITORED"
-                                )
-
-
-                        detections.append(
-                            {
-
-                                "label":
-                                    label,
-
-                                "confidence":
-                                    round(
-                                        conf,
-                                        3,
-                                    ),
-
-                                "bbox":
-                                    bbox,
-                            }
-                        )
-
-
-                if detections:
-
-                    annotated_b64 = (
-                        draw_annotations(
-                            frame_rgb,
-                            detections,
-                        )
-                    )
-
-
-                    alert_id = (
-
-                        f"video_"
-
-                        f"{int(datetime.datetime.utcnow().timestamp() * 1000)}_"
-
-                        f"{frame_count}"
-                    )
-
-
-                    record = AlertRecord(
-
-                        id=alert_id,
-
-                        camera_id=(
-                            f"{camera_id} "
-                            f"[{timestamp_sec}s]"
-                        ),
-
-                        timestamp=
-                            datetime.datetime.utcnow(),
-
-                        latitude=
-                            latitude,
-
-                        longitude=
-                            longitude,
-
-                        threat_level=
-                            threat_level,
-
-                        detections=
-                            json.dumps(
-                                detections
-                            ),
-
-                        resolved=
-                            False,
-
-                        annotated_image=
-                            annotated_b64,
-                    )
-
-
-                    db.add(
-                        record
-                    )
-
-                    db.commit()
-
-                    db.refresh(
-                        record
-                    )
-
-
-                    alert_payload = {
-
-                        "id":
-                            alert_id,
-
-                        "camera_id":
-                            (
-                                f"{camera_id} "
-                                f"[{timestamp_sec}s]"
-                            ),
-
-                        "timestamp":
-                            (
-                                record
-                                .timestamp
-                                .isoformat()
-                                + "Z"
-                            ),
-
-                        "location": {
-
-                            "lat":
-                                latitude,
-
-                            "lng":
-                                longitude,
-                        },
-
-                        "detections":
-                            detections,
-
-                        "threat_level":
-                            threat_level,
-
-                        "resolved":
-                            False,
-
-                        "annotated_image":
-                            annotated_b64,
-                    }
-
-
-                    video_summary.append(
-                        alert_payload
-                    )
-
-
-                    await manager.broadcast(
-                        {
-
-                            "type":
-                                "NEW_ALERT",
-
-                            "payload":
-                                alert_payload,
-
-                            "data":
-                                alert_payload,
-                        }
-                    )
-
-
-            frame_count += 1
-
-
-    except Exception as e:
-
-        db.rollback()
-
-        raise HTTPException(
-            status_code=500,
-            detail=str(e),
-        )
-
-
-    finally:
-
-        cap.release()
-
-
-        if os.path.exists(
-            tmp_path
-        ):
-
-            os.remove(
-                tmp_path
-            )
-
-
-    return {
-
-        "status":
-            "success",
-
-        "processed_frames":
-            frame_count,
-
-        "detections_found":
-            len(
-                video_summary
-            ),
-
-        "incidents":
-            video_summary,
-    }
-
-
-# ============================================================
-# AUDIO DETECTION
-# ============================================================
-
-@app.post("/api/detect/audio")
-async def detect_audio(
-
-    audio: UploadFile = File(...),
-
-    camera_id: str = Form(
-        "ACOUSTIC_SENSOR_01"
-    ),
-
-    latitude: float = Form(
-        12.9698
-    ),
-
-    longitude: float = Form(
-        79.1559
-    ),
-
-    db: Session = Depends(
-        get_db
-    ),
-
-):
-
-    suffix = (
-        Path(
-            audio.filename
-            or "audio.wav"
-        ).suffix
-        or ".wav"
-    )
-
-
-    with tempfile.NamedTemporaryFile(
-        delete=False,
-        suffix=suffix,
-    ) as tmp:
-
-        shutil.copyfileobj(
-            audio.file,
-            tmp,
-        )
-
-        tmp_path = (
-            tmp.name
-        )
-
-
-    try:
-
-        (
-            threat_label,
-            confidence,
-            threat_level,
-        ) = predict_audio_threat(
-            tmp_path
-        )
-
-
-        detections = [
-
-            {
-
-                "label":
-                    (
-                        f"[Audio] "
-                        f"{threat_label}"
-                    ),
-
-                "confidence":
-                    round(
-                        confidence,
-                        3,
-                    ),
-
-                "bbox":
-                    [
-                        0,
-                        0,
-                        0,
-                        0,
-                    ],
-            }
-        ]
-
-
-        alert_id = (
-            f"audio_"
-            f"{int(datetime.datetime.utcnow().timestamp() * 1000)}"
-        )
-
-
-        record = AlertRecord(
-
-            id=alert_id,
-
-            camera_id=
-                camera_id,
-
-            timestamp=
-                datetime.datetime.utcnow(),
-
-            latitude=
-                latitude,
-
-            longitude=
-                longitude,
-
-            threat_level=
-                threat_level,
-
-            detections=
-                json.dumps(
-                    detections
-                ),
-
-            resolved=
-                False,
-
-            annotated_image=
-                None,
-        )
-
-
-        db.add(
-            record
-        )
-
-        db.commit()
-
-        db.refresh(
-            record
-        )
-
-
-        payload = {
-
-            "id":
-                alert_id,
-
-            "camera_id":
-                camera_id,
-
-            "timestamp":
-                (
-                    record
-                    .timestamp
-                    .isoformat()
-                    + "Z"
-                ),
-
-            "location": {
-
-                "lat":
-                    latitude,
-
-                "lng":
-                    longitude,
-            },
-
-            "detections":
-                detections,
-
-            "threat_level":
-                threat_level,
-
-            "resolved":
-                False,
-
-            "annotated_image":
-                None,
-
-            "source":
-                "Acoustic Sensor Node",
-        }
-
-
-        await manager.broadcast(
-            {
-
-                "type":
-                    "NEW_ALERT",
-
-                "payload":
-                    payload,
-
-                "data":
-                    payload,
-            }
-        )
-
-
-        if (
-            threat_level
-            in [
-                "CRITICAL",
-                "HIGH",
-            ]
-        ):
-
-            send_critical_alert(
-
-                camera_id,
-
-                threat_level,
-
-                detections,
-
-                {
-
-                    "lat":
-                        latitude,
-
-                    "lng":
-                        longitude,
-                },
-            )
-
-
-        return payload
-
-
-    except Exception as e:
-
-        db.rollback()
-
-        raise HTTPException(
-            status_code=500,
-            detail=str(e),
-        )
-
-
-    finally:
-
-        if os.path.exists(
-            tmp_path
-        ):
-
-            os.remove(
-                tmp_path
-            )
-
-
-# ============================================================
-# STATS
-# ============================================================
-
-@app.get("/api/stats")
-def get_stats(
-    db: Session = Depends(
-        get_db
-    ),
-):
-
-    total_events = (
-        db.query(
-            AlertRecord
-        ).count()
-    )
-
-
-    critical = (
-        db.query(
-            AlertRecord
-        )
-        .filter(
-            AlertRecord.threat_level
-            == "CRITICAL"
-        )
-        .count()
-    )
-
-
-    high = (
-        db.query(
-            AlertRecord
-        )
-        .filter(
-            AlertRecord.threat_level
-            == "HIGH"
-        )
-        .count()
-    )
-
-
-    monitored = (
-        db.query(
-            AlertRecord
-        )
-        .filter(
-            AlertRecord.threat_level
-            == "MONITORED"
-        )
-        .count()
-    )
-
-
-    return {
-
-        "total_events":
-            total_events,
-
-        "critical_intrusions":
-            critical,
-
-        "high_threats":
-            high,
-
-        "wildlife_sightings":
-            monitored,
-
-        "active_camera_nodes":
-            len(
-                camera_nodes_db
-            ),
-    }
-
-
-# ============================================================
-# ALERTS
-# ============================================================
-
-@app.get("/api/alerts")
-def get_alerts(
-
-    limit: int = 100,
-
-    db: Session = Depends(
-        get_db
-    ),
-
-):
-
-    limit = max(
-        1,
-        min(
-            limit,
-            500,
-        ),
-    )
-
-
-    records = (
-        db.query(
-            AlertRecord
-        )
-        .order_by(
-            AlertRecord.timestamp.desc()
-        )
-        .limit(
-            limit
-        )
-        .all()
-    )
-
-
-    return [
-
-        {
-
-            "id":
-                r.id,
-
-            "camera_id":
-                r.camera_id,
-
-            "timestamp":
-                (
-                    r.timestamp
-                    .isoformat()
-                    + "Z"
-                ),
-
-            "location": {
-
-                "lat":
-                    r.latitude,
-
-                "lng":
-                    r.longitude,
-            },
-
-            "detections":
-                (
-                    json.loads(
-                        r.detections
-                    )
-                    if r.detections
-                    else []
-                ),
-
-            "threat_level":
-                r.threat_level,
-
-            "resolved":
-                r.resolved,
-
-            "annotated_image":
-                r.annotated_image,
-        }
-
-        for r in records
-    ]
-
-
-@app.post(
-    "/api/alerts/{alert_id}/resolve"
-)
-def resolve_alert(
-
-    alert_id: str,
-
-    db: Session = Depends(
-        get_db
-    ),
-
-):
-
-    record = (
-        db.query(
-            AlertRecord
-        )
-        .filter(
-            AlertRecord.id
-            == alert_id
-        )
-        .first()
-    )
-
-
-    if not record:
-
-        raise HTTPException(
-            status_code=404,
-            detail=(
-                "Incident alert "
-                "not found"
-            ),
-        )
-
-
-    record.resolved = True
-
-    db.commit()
-
-
-    return {
-
-        "status":
-            "success",
-
-        "id":
-            alert_id,
-
-        "resolved":
-            True,
-    }
-
-
-@app.delete(
-    "/api/alerts/clear"
-)
-def clear_alerts(
-    db: Session = Depends(
-        get_db
-    ),
-):
-
-    deleted = (
-        db.query(
-            AlertRecord
-        ).delete()
-    )
-
-
-    db.commit()
-
-
-    return {
-
-        "status":
-            "cleared",
-
-        "deleted":
-            deleted,
-    }
-
-
-# ============================================================
-# ANALYTICS
-# ============================================================
-
-@app.get("/api/analytics")
-def get_analytics(
-    db: Session = Depends(
-        get_db
-    ),
-):
-
-    records = (
-        db.query(
-            AlertRecord
-        ).all()
-    )
-
-
-    species_breakdown = {}
-
-
-    threat_breakdown = {
-
-        "CRITICAL":
-            0,
-
-        "HIGH":
-            0,
-
-        "MONITORED":
-            0,
-
-        "LOW":
-            0,
-    }
-
-
-    modality_breakdown = {
-
-        "Vision Stream":
-            0,
-
-        "Acoustic Sensor":
-            0,
-
-        "LoRa Mesh":
-            0,
-    }
-
-
-    hourly_distribution = [
-        0
-    ] * 24
-
-
-    for r in records:
-
-        threat = (
-            r.threat_level
-            or "LOW"
-        )
-
-
-        threat_breakdown[
-            threat
-        ] = (
-            threat_breakdown.get(
-                threat,
-                0,
-            )
-            + 1
-        )
-
-
-        camera_id = (
-            r.camera_id
-            or ""
-        ).lower()
-
-
-        record_id = (
-            r.id
-            or ""
-        ).lower()
-
-
-        if (
-            record_id.startswith(
-                "audio_"
-            )
-
-            or "acoustic"
-            in camera_id
-        ):
-
-            modality_breakdown[
-                "Acoustic Sensor"
-            ] += 1
-
-
-        elif (
-            "lora"
-            in camera_id
-        ):
-
-            modality_breakdown[
-                "LoRa Mesh"
-            ] += 1
-
-
-        else:
-
-            modality_breakdown[
-                "Vision Stream"
-            ] += 1
-
-
-        if r.timestamp:
-
-            hourly_distribution[
-                r.timestamp.hour
-            ] += 1
-
-
+def process_video(data, suffix, sample_rate, threshold):
+    results = []
+    with temporary_file(data, suffix) as path:
+        capture = cv2.VideoCapture(path)
         try:
+            fps = capture.get(cv2.CAP_PROP_FPS)
+            total = capture.get(cv2.CAP_PROP_FRAME_COUNT)
+            if (
+                not capture.isOpened()
+                or not math.isfinite(fps)
+                or not 0 < fps <= 120
+                or not math.isfinite(total)
+                or total <= 0
+            ):
+                raise HTTPException(422, "INPUT_ERROR: corrupt video or invalid FPS")
+            if (
+                total > config.MAX_VIDEO_FRAMES
+                or total / fps > config.MAX_VIDEO_SECONDS
+            ):
+                raise HTTPException(413, "Video exceeds frame or duration limits")
+            step = max(1, round(fps * sample_rate))
+            if math.ceil(total / step) > config.MAX_SAMPLED_FRAMES:
+                raise HTTPException(413, "Too many sampled frames")
+            decoded = 0
+            while decoded < total:
+                ok, frame = capture.read()
+                if not ok:
+                    raise HTTPException(422, "INPUT_ERROR: truncated or corrupt video")
+                if frame.shape[0] * frame.shape[1] > config.MAX_IMAGE_PIXELS:
+                    raise HTTPException(413, "Video frame dimensions exceed limits")
+                if decoded % step == 0:
+                    image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                    prediction = vision.predict(image, threshold, skip_motion_check=True)
+                    results.append(
+                        (
+                            decoded / fps,
+                            prediction,
+                            jpeg(image, prediction["detections"]),
+                        )
+                    )
+                decoded += 1
+            return results, decoded, fps
+        finally:
+            capture.release()
 
-            dets = (
-                json.loads(
-                    r.detections
-                )
 
-                if r.detections
-
-                else []
+@app.post("/api/detect/video", dependencies=[operate])
+@limiter.limit("4/minute")
+async def detect_video(
+    request: Request,
+    video: UploadFile = File(...),
+    camera_id: str = Form("CAM_VIDEO_CCTV"),
+    latitude: float = Form(12.9698),
+    longitude: float = Form(79.1559),
+    sample_rate: float = Form(2, ge=1, le=30),
+):
+    node = sensor(camera_id, latitude, longitude)
+    async with inference_slots:
+        data, suffix = await run_in_threadpool(
+            read_upload,
+            video,
+            config.MAX_VIDEO_BYTES,
+            {
+                ".mp4": {"video/mp4"},
+                ".avi": {"video/x-msvideo"},
+                ".mov": {"video/quicktime"},
+                ".webm": {"video/webm"},
+            },
+        )
+        settings = await run_in_threadpool(store.settings)
+        results, decoded, fps = await run_in_threadpool(
+            process_video, data, suffix, sample_rate, settings["confidence_threshold"]
+        )
+        incidents = {}
+        base_time = utcnow() - timedelta(seconds=decoded / fps)
+        for offset, prediction, image in results:
+            payload = Telemetry(
+                **node.model_dump(),
+                modality="Video",
+                threat_level=prediction["risk_level"],
+                detections=prediction["detections"],
+                vision_confidence=prediction["confidence"],
+                model_versions={"vision": vision.version},
+                observed_at=base_time + timedelta(seconds=offset),
             )
-
-
-        except (
-            json.JSONDecodeError,
-            TypeError,
-        ):
-
-            dets = []
-
-
-        for det in dets:
-
-            label = (
-                det.get(
-                    "label",
-                    "unknown",
-                )
-                .capitalize()
-            )
-
-
-            species_breakdown[
-                label
-            ] = (
-                species_breakdown.get(
-                    label,
-                    0,
-                )
-                + 1
-            )
-
-
-    hourly_trend = [
-
-        {
-
-            "hour":
-                f"{h:02d}",
-
-            "intrusions":
-                hourly_distribution[
-                    h
-                ],
+            receipt = await ingest(payload, image, payload.observed_at)
+            if receipt["alert"]:
+                incidents[receipt["alert_id"]] = receipt["alert"]
+        return {
+            "status": "success",
+            "decoded_frames": decoded,
+            "processed_frames": len(results),
+            "fps": fps,
+            "duration_seconds": decoded / fps,
+            "detections_found": sum(bool(r[1]["detections"]) for r in results),
+            "incidents": list(incidents.values()),
         }
 
-        for h in range(
-            24
+
+@app.post("/api/detect/audio", dependencies=[operate])
+@limiter.limit("20/minute")
+async def detect_audio(
+    request: Request,
+    audio: UploadFile = File(...),
+    camera_id: str = Form("ACOUSTIC_EDGE_SENSOR_01"),
+    latitude: float = Form(12.9698),
+    longitude: float = Form(79.1559),
+):
+    from backend.media import AUDIO_TYPES
+
+    node = sensor(camera_id, latitude, longitude)
+    data, _ = await run_in_threadpool(
+        read_upload, audio, config.MAX_AUDIO_BYTES, AUDIO_TYPES
+    )
+    try:
+        async with httpx.AsyncClient(timeout=45, trust_env=False) as client:
+            response = await client.post(
+                config.AUDIO_API_URL + "/api/audio/classify",
+                files={"audio": (audio.filename, data, audio.content_type)},
+                headers={"Authorization": "Bearer " + config.SERVICE_TOKEN},
+            )
+            if response.status_code in (413, 415, 422, 503):
+                raise HTTPException(
+                    response.status_code,
+                    "Audio service rejected input or model unavailable",
+                )
+            response.raise_for_status()
+            result = response.json()
+        payload = Telemetry(
+            **node.model_dump(),
+            modality="Audio",
+            threat_level=result["risk_level"],
+            audio_confidence=result["confidence"],
+            detections=[
+                {
+                    "label": result["label"],
+                    "confidence": result["confidence"],
+                    "kind": "audio",
+                }
+            ],
+            model_versions={"audio": result["model_version"]},
         )
+    except (httpx.HTTPError, ValueError, KeyError):
+        raise HTTPException(503, "UNAVAILABLE: audio service failed") from None
+    return {**result, "threat_level": result["risk_level"], **await ingest(payload)}
+
+
+@app.get("/api/alerts", dependencies=[read_access])
+def get_alerts(
+    response: Response,
+    limit: int = Query(100, ge=1, le=500),
+    before: str | None = None,
+    after: str | None = None,
+    camera: str | None = None,
+    threat_level: Risk | None = None,
+    resolved: bool | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
+):
+    if before and after:
+        raise HTTPException(422, "Use before or after, not both")
+    start, end = validate_range(start, end, default=False)
+    result = store.alerts(
+        limit, before, after, camera, threat_level, resolved, start, end
+    )
+    if len(result) == limit:
+        response.headers["X-Next-Cursor"] = result[-1]["id"]
+    return result
+
+
+@app.get("/api/alerts/{alert_id}/image", dependencies=[read_access])
+def alert_image(alert_id: str):
+    with store.connection() as db:
+        row = db.execute(
+            "SELECT image_reference FROM alerts WHERE id=?", (alert_id,)
+        ).fetchone()
+    if not row or not row[0]:
+        raise HTTPException(404, "Image not found")
+    path = (store.media_dir / row[0]).resolve()
+    if path.parent != store.media_dir.resolve() or not path.is_file():
+        raise HTTPException(404, "Image not found")
+    return FileResponse(
+        path, media_type="image/jpeg", headers={"Cache-Control": "private, no-store"}
+    )
+
+
+@app.post("/api/alerts/{alert_id}/resolve", dependencies=[operate])
+async def resolve_alert(alert_id: str):
+    def update():
+        with store.connection(write=True) as db:
+            if not db.execute(
+                "UPDATE alerts SET resolved=1 WHERE id=?", (alert_id,)
+            ).rowcount:
+                raise HTTPException(404, "Incident not found")
+        return store.get(alert_id)
+
+    alert = await run_in_threadpool(update)
+    await manager.broadcast({"type": "UPDATE_ALERT", "payload": alert})
+    return {"status": "success", "id": alert_id, "resolved": True}
+
+
+@app.delete("/api/alerts/clear", dependencies=[admin])
+async def clear_alerts():
+    def clear():
+        with store.connection(write=True) as db:
+            return db.execute("DELETE FROM alerts").rowcount
+
+    deleted = await run_in_threadpool(clear)
+    await manager.broadcast({"type": "CLEAR_ALERTS"})
+    return {"status": "cleared", "deleted": deleted}
+
+
+def validate_range(start, end, default=True):
+    if any(value is not None and value.tzinfo is None for value in (start, end)):
+        raise HTTPException(422, "Dates must include timezone")
+    if default:
+        end = end or utcnow()
+        start = start or end - timedelta(days=30)
+    if start and end and (start > end or end - start > timedelta(days=366)):
+        raise HTTPException(422, "Invalid date range; maximum 366 days")
+    return start, end
+
+
+@app.get("/api/analytics", dependencies=[read_access])
+def analytics(start: datetime | None = None, end: datetime | None = None):
+    return store.analytics(*validate_range(start, end))
+
+
+@app.get("/api/stats", dependencies=[read_access])
+def stats():
+    with store.connection() as db:
+        threats = dict(
+            db.execute("SELECT threat_level,count(*) FROM alerts GROUP BY threat_level")
+        )
+        wildlife = db.execute(
+            "SELECT count(DISTINCT alert_id) FROM detection_labels WHERE kind='species'"
+        ).fetchone()[0]
+        dispatch = dict(
+            db.execute("SELECT status,count(*) FROM dispatch_outbox GROUP BY status")
+        )
+    cameras = camera_status()
+    return {
+        "total_events": sum(threats.values()),
+        "critical_intrusions": threats.get("CRITICAL", 0),
+        "high_threats": threats.get("HIGH", 0),
+        "wildlife_sightings": wildlife,
+        "active_camera_nodes": sum(c["status"] == "ONLINE" for c in cameras),
+        "total_camera_nodes": len(cameras),
+        "dispatch": dispatch,
+    }
+
+
+@app.get("/api/cameras", dependencies=[read_access])
+def cameras():
+    return camera_status()
+
+
+@app.get("/api/settings", dependencies=[read_access])
+def settings():
+    result = store.settings()
+    result["discord_webhook_configured"] = bool(config.DISCORD_WEBHOOK_URL)
+    result["available_streams"] = sorted(config.CAMERA_ENDPOINTS)
+    return result
+
+
+@app.post("/api/settings", dependencies=[admin])
+@limiter.limit("20/minute")
+def update_settings(request: Request, payload: SettingsPayload):
+    updates = payload.model_dump(exclude_none=True)
+    if "remote_streams" in updates:
+        try:
+            for camera_id in updates["remote_streams"]:
+                validate_endpoint(camera_id)
+        except ValueError:
+            raise HTTPException(
+                422, "Stream must be a provisioned, allowlisted camera"
+            ) from None
+    store.update_settings(updates)
+    return {"status": "updated", "settings": settings()}
+
+
+@app.get("/api/cameras/{camera_id}/frame", dependencies=[read_access])
+def camera_frame(camera_id: str):
+    import time
+    from backend.cameras import frames
+
+    if camera_id not in config.CAMERA_IDS:
+        raise HTTPException(404, "Camera not found")
+    frame = frames.get(camera_id)
+    if not frame or time.monotonic() - frame[0] > 10:
+        raise HTTPException(503, "Camera feed unavailable")
+    return Response(
+        frame[1], media_type="image/jpeg", headers={"Cache-Control": "no-store"}
+    )
+
+
+@app.get("/api/governor", dependencies=[read_access])
+def get_governor_state():
+    import psutil
+
+    cpu = psutil.cpu_percent()
+    decision = governor.decide(
+        has_motion=False,
+        active_tracks_count=len(vision.tracker.get_active_tracks()),
+        cpu_utilization_pct=cpu,
+    )
+    return {
+        "cadence_mode": decision.cadence_mode,
+        "target_fps": decision.target_fps,
+        "model_tier": decision.model_tier,
+        "input_resolution": decision.input_resolution,
+        "tracking_enabled": decision.tracking_enabled,
+        "clahe_enabled": decision.clahe_enabled,
+        "audio_poll_seconds": decision.audio_poll_seconds,
+        "cpu_utilization_pct": cpu,
+        "rationale": decision.rationale,
+    }
+
+
+@app.get("/api/heatmap", dependencies=[read_access])
+def get_risk_heatmap(hour: int | None = Query(None, ge=0, le=23)):
+    with store.connection() as db:
+        rows = db.execute("SELECT * FROM alerts").fetchall()
+        alerts = [dict(r) for r in rows]
+    sett = store.settings()
+    hq = sett["ranger_hq"]
+    cells = heatmap_engine.compute_heatmap(
+        historical_alerts=alerts,
+        target_hour=hour,
+        core_center=(hq["lat"], hq["lng"]),
+        core_radius_m=sett["geofence_core_radius_m"],
+    )
+    return cells
+
+
+@app.get("/api/incidents/multi-camera", dependencies=[read_access])
+def get_multi_camera_incidents():
+    incidents = multi_camera_correlator.get_active_incidents()
+    return [
+        {
+            "incident_id": inc.incident_id,
+            "cameras": inc.cameras,
+            "first_seen": inc.first_seen,
+            "last_seen": inc.last_seen,
+            "transit_duration_s": inc.transit_duration_s,
+            "total_distance_m": inc.total_distance_m,
+            "estimated_speed_kmh": inc.estimated_speed_kmh,
+            "direction_heading_deg": inc.direction_heading_deg,
+            "primary_label": inc.primary_label,
+            "max_threat_level": inc.max_threat_level,
+            "confidence": inc.confidence,
+            "summary": inc.summary,
+        }
+        for inc in incidents
     ]
 
 
+@app.post("/api/alerts/{alert_id}/feedback", dependencies=[operate])
+def submit_ranger_feedback(alert_id: str, payload: RangerFeedbackPayload):
+    alert = store.get(alert_id)
+    if not alert:
+        raise HTTPException(404, "Alert not found")
+    img_bytes = None
+    if alert.get("image_reference"):
+        path = store.media_dir / alert["image_reference"]
+        if path.is_file():
+            img_bytes = path.read_bytes()
+    return hard_negative_mgr.record_feedback(
+        alert_id=alert_id,
+        feedback=payload.feedback_type,
+        ranger_id=payload.ranger_id,
+        notes=payload.notes,
+        image_bytes=img_bytes,
+        detections=alert.get("detections"),
+    )
+
+
+@app.get("/api/feedback/metrics", dependencies=[read_access])
+def get_feedback_metrics():
+    return hard_negative_mgr.compute_metrics()
+
+
+@app.get("/api/alerts/{alert_id}/explain", dependencies=[read_access])
+def explain_alert(alert_id: str):
+    alert = store.get(alert_id)
+    if not alert:
+        raise HTTPException(404, "Alert not found")
+    sett = store.settings()
+    from backend.dispatch import evaluate_geofence
+
+    geofence_status = evaluate_geofence(alert["latitude"], alert["longitude"], sett)
+    explanation = generate_explainable_alert(
+        detections=alert.get("detections", []),
+        threat_level=alert.get("threat_level", "LOW"),
+        detection_level="THREAT"
+        if alert.get("threat_level") in {"HIGH", "CRITICAL"}
+        else "SUSPICIOUS",
+        vision_confidence=alert.get("vision_confidence")
+        or alert.get("peak_confidence")
+        or 0.80,
+        hits_confirmed=alert.get("frame_count", 1),
+        total_frames_sampled=max(1, alert.get("frame_count", 1) + 2),
+        is_night=False,
+        in_core_geofence=(geofence_status == "CORE"),
+        base_threshold=sett.get("confidence_threshold", 0.50),
+    )
     return {
-
-        "species_distribution":
-            species_breakdown,
-
-        "threat_severity_distribution":
-            threat_breakdown,
-
-        "modality_distribution":
-            modality_breakdown,
-
-        "hourly_trend":
-            hourly_trend,
-
-        "most_frequent_target":
-            (
-
-                max(
-                    species_breakdown,
-                    key=
-                        species_breakdown.get,
-                )
-
-                if species_breakdown
-
-                else "N/A"
-            ),
+        "summary": explanation.summary_sentence,
+        "evidence_checklist": explanation.evidence_checklist,
+        "model_cascade_trace": explanation.model_cascade_trace,
+        "temporal_confirmation_ratio": explanation.temporal_confirmation_ratio,
+        "threshold_audit": explanation.threshold_audit,
+        "recommended_action": explanation.operational_action_recommended,
     }
 
 
-# ============================================================
-# CAMERAS
-# ============================================================
+@app.get("/api/research/ablation", dependencies=[read_access])
+def get_ablation_results():
+    ablation_file = config.DATA_DIR / "ablation_results.json"
+    if not ablation_file.is_file():
+        ablation_file = config.ROOT / "data" / "ablation_results.json"
+    if ablation_file.is_file():
+        return json.loads(ablation_file.read_text(encoding="utf-8"))
+    return []
 
-@app.get("/api/cameras")
-def get_cameras():
-
-    return camera_nodes_db
-
-
-# ============================================================
-# SETTINGS API
-# ============================================================
-
-class SettingsPayload(
-    BaseModel
-):
-
-    confidence_threshold: Optional[
-        float
-    ] = None
-
-
-    geofence_core_radius_m: Optional[
-        int
-    ] = None
-
-
-    discord_webhook_url: Optional[
-        str
-    ] = None
-
-
-    remote_streams: Optional[
-        Dict[
-            str,
-            str,
-        ]
-    ] = None
-
-
-@app.get("/api/settings")
-def get_settings():
-
-    return {
-
-        "confidence_threshold":
-            system_settings[
-                "confidence_threshold"
-            ],
-
-        "geofence_core_radius_m":
-            system_settings[
-                "geofence_core_radius_m"
-            ],
-
-        "ranger_hq":
-            system_settings[
-                "ranger_hq"
-            ],
-
-        "remote_streams":
-            system_settings[
-                "remote_streams"
-            ],
-
-        "discord_webhook_configured":
-            bool(
-                system_settings.get(
-                    "discord_webhook_url"
-                )
-            ),
-    }
-
-
-@app.post("/api/settings")
-def update_settings(
-    payload: SettingsPayload,
-):
-
-    if (
-        payload.confidence_threshold
-        is not None
-    ):
-
-        value = float(
-            payload.confidence_threshold
-        )
-
-
-        if not (
-            0.01
-            <= value
-            <= 1.0
-        ):
-
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "confidence_threshold "
-                    "must be between "
-                    "0.01 and 1.0"
-                ),
-            )
-
-
-        system_settings[
-            "confidence_threshold"
-        ] = value
-
-
-    if (
-        payload.geofence_core_radius_m
-        is not None
-    ):
-
-        radius = int(
-            payload.geofence_core_radius_m
-        )
-
-
-        if radius <= 0:
-
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "geofence_core_radius_m "
-                    "must be greater than 0"
-                ),
-            )
-
-
-        system_settings[
-            "geofence_core_radius_m"
-        ] = radius
-
-
-    if (
-        payload.discord_webhook_url
-        is not None
-    ):
-
-        system_settings[
-            "discord_webhook_url"
-        ] = (
-            payload.discord_webhook_url
-            .strip()
-        )
-
-
-    if (
-        payload.remote_streams
-        is not None
-    ):
-
-        system_settings[
-            "remote_streams"
-        ] = {
-
-            str(key):
-                str(value).strip()
-
-            for key, value
-            in payload.remote_streams.items()
-        }
-
-
-    return {
-
-        "status":
-            "updated",
-
-        "settings":
-            get_settings(),
-    }
-
-
-# ============================================================
-# DIRECT START
-# ============================================================
 
 if __name__ == "__main__":
+    import uvicorn
 
-    uvicorn.run(
-        "backend.main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-    )
+    uvicorn.run("backend.main:app", host="127.0.0.1", port=8000)

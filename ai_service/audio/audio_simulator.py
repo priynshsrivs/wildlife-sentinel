@@ -1,42 +1,21 @@
-import time
-from classifier import classify_audio
+"""Run once against the common audio service using the included fixture."""
 
-
-AUDIO_FILE = "ai_service/audio/test.wav"
+import os
+import requests
+from sentinel_config import ROOT, AUDIO_API_URL
 
 
 def run_audio_monitor():
-
-    print("======================================")
-    print(" WILDLIFE SENTINEL AUDIO MONITOR")
-    print("======================================")
-
-    while True:
-
-        print("\n[+] Analyzing audio...")
-
-        try:
-            result = classify_audio(AUDIO_FILE)
-
-            label = result["label"]
-            risk = result["risk_level"]
-
-            print(f"Detection : {label}")
-            print(f"Risk      : {risk}")
-
-            if risk == "HIGH":
-                print("🚨 HIGH RISK AUDIO EVENT DETECTED")
-
-            elif risk == "MEDIUM":
-                print("⚠️ Suspicious audio activity detected")
-
-            else:
-                print("✓ Normal audio")
-
-        except Exception as e:
-            print(f"[ERROR] {e}")
-
-        time.sleep(3)
+    token = os.getenv("OPERATOR_API_TOKEN") or os.getenv("ADMIN_API_TOKEN", "")
+    with (ROOT / "ai_service/audio/test.wav").open("rb") as audio:
+        response = requests.post(
+            AUDIO_API_URL + "/api/audio/classify",
+            headers={"Authorization": "Bearer " + token},
+            files={"audio": ("test.wav", audio, "audio/wav")},
+            timeout=60,
+        )
+    response.raise_for_status()
+    print(response.json())
 
 
 if __name__ == "__main__":

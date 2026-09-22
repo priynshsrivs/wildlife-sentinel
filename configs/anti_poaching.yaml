@@ -1,0 +1,32 @@
+# Wildlife Sentinel - Anti-Poaching Dataset Configuration
+# YAML specification for Ultralytics YOLO training and fine-tuning.
+
+path: ../dataset/anti_poaching  # dataset root dir
+train: images/train            # train images (relative to 'path')
+val: images/val                # val images (relative to 'path')
+test: images/test              # test images (optional)
+
+# Anti-Poaching Target Classes (Compact Domain Vocabulary)
+# Intentionally small vocabulary to optimize edge feature discrimination and inference speed
+names:
+  0: person
+  1: car
+  2: motorcycle
+  3: truck
+  4: boat
+  5: firearm
+  6: rifle
+  7: chainsaw
+  8: hunting_equipment
+  9: snare
+  10: trap
+  11: suspicious_container
+
+# Pretrained Transfer Mapping from COCO:
+# - COCO Class 0  -> 0: person
+# - COCO Class 2  -> 1: car
+# - COCO Class 3  -> 2: motorcycle
+# - COCO Class 7  -> 3: truck
+# - COCO Class 8  -> 4: boat
+# - Custom 5-11   -> fine-tuned from domain annotations
+

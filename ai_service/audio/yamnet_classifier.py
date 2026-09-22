@@ -1,152 +1,117 @@
+"""One YAMNet interface; no heuristic fallback or implicit network downloads."""
+
 import csv
+import logging
+import threading
+from dataclasses import asdict, dataclass
+from pathlib import Path
 import numpy as np
-import librosa
-import tensorflow_hub as hub
+from fastapi import HTTPException
+from sentinel_config import YAMNET_MODEL_PATH, FUSION_CONFIDENCE_THRESHOLD
+
+log = logging.getLogger(__name__)
+LABEL_RISKS = {
+    "Gunshot, gunfire": "CRITICAL",
+    "Explosion": "CRITICAL",
+    "Chainsaw": "HIGH",
+    "Sawing": "HIGH",
+    "Vehicle": "HIGH",
+    "Engine": "HIGH",
+    "Speech": "MEDIUM",
+    "Animal": "MONITORED",
+    "Bird": "MONITORED",
+    "Wild animals": "MONITORED",
+    "Wind": "LOW",
+    "Rain": "LOW",
+    "Rustling leaves": "LOW",
+    "Silence": "LOW",
+}
 
 
-print("[AUDIO AI] Loading YAMNet...")
+@dataclass(frozen=True)
+class AudioPrediction:
+    label: str
+    confidence: float
+    risk_level: str
+    model_version: str
 
-yamnet_model = hub.load(
-    "https://tfhub.dev/google/yamnet/1"
-)
-
-# Load YAMNet class names
-class_map_path = (
-    yamnet_model.class_map_path()
-    .numpy()
-    .decode("utf-8")
-)
-
-CLASS_NAMES = []
-
-with open(class_map_path, "r", encoding="utf-8") as file:
-    reader = csv.DictReader(file)
-
-    for row in reader:
-        CLASS_NAMES.append(row["display_name"])
+    def to_dict(self):
+        return asdict(self)
 
 
-print("[AUDIO AI] YAMNet loaded successfully.")
+class AudioClassifier:
+    def __init__(self):
+        self.model = None
+        self.names = []
+        self.version = "unavailable"
+        self.lock = threading.Lock()
+
+    def initialize(self):
+        try:
+            if (
+                not YAMNET_MODEL_PATH
+                or not Path(YAMNET_MODEL_PATH, "saved_model.pb").is_file()
+            ):
+                raise FileNotFoundError("Configure an extracted YAMNET_MODEL_PATH")
+            import tensorflow as tf
+            import hashlib
+
+            self.model = tf.saved_model.load(YAMNET_MODEL_PATH)
+            path = self.model.class_map_path().numpy().decode("utf-8")
+            with open(path, encoding="utf-8") as f:
+                self.names = [row["display_name"] for row in csv.DictReader(f)]
+            with open(Path(YAMNET_MODEL_PATH, "saved_model.pb"), "rb") as f:
+                self.version = (
+                    "yamnet-" + hashlib.file_digest(f, "sha256").hexdigest()[:16]
+                )
+            log.info("audio_model_ready model=%s", self.version)
+        except Exception:
+            self.model = None
+            log.exception("audio_initialization_failed")
+
+    def predict(self, waveform):
+        if self.model is None:
+            raise HTTPException(503, "MODEL_ERROR: audio model unavailable")
+        try:
+            with self.lock:
+                scores, _, _ = self.model(waveform)
+                values = np.max(scores.numpy(), axis=0)
+            if (
+                values.shape != (len(self.names),)
+                or not np.isfinite(values).all()
+                or np.min(values) < 0
+                or np.max(values) > 1
+            ):
+                raise ValueError("Invalid model output")
+            from ai_service.risk_engine import PRIORITY
+
+            candidates = [
+                (name, float(values[i]), LABEL_RISKS[name])
+                for i, name in enumerate(self.names)
+                if name in LABEL_RISKS and values[i] >= FUSION_CONFIDENCE_THRESHOLD
+            ]
+            if candidates:
+                label, confidence, risk = max(
+                    candidates, key=lambda p: (PRIORITY[p[2]], p[1])
+                )
+            else:
+                index = int(np.argmax(values))
+                label, confidence, risk = (
+                    self.names[index],
+                    float(values[index]),
+                    "UNKNOWN",
+                )
+            return AudioPrediction(label, confidence, risk, self.version)
+        except Exception:
+            log.exception("audio_inference_failed model=%s", self.version)
+            raise HTTPException(503, "MODEL_ERROR: audio inference failed") from None
 
 
-def predict_yamnet_threat(audio_path: str):
+classifier = AudioClassifier()
 
-    try:
-        # YAMNet expects:
-        # mono audio
-        # 16 kHz sample rate
-        waveform, sr = librosa.load(
-            audio_path,
-            sr=16000,
-            mono=True,
-            duration=10.0
-        )
 
-        if len(waveform) == 0:
-            return (
-                "Unclassified Acoustic Event",
-                0.50,
-                "LOW"
-            )
+def predict_yamnet_threat(audio_path):
+    from backend.media import decode_audio
 
-        waveform = waveform.astype(np.float32)
-
-        # Run neural network
-        scores, embeddings, spectrogram = yamnet_model(
-            waveform
-        )
-
-        scores = scores.numpy()
-
-        # Maximum confidence reached by each class
-        class_scores = np.max(scores, axis=0)
-
-        predictions = {
-            CLASS_NAMES[i]: float(class_scores[i])
-            for i in range(len(CLASS_NAMES))
-        }
-
-        # -------------------------------------------
-        # 1. GUNSHOT / EXPLOSION
-        # -------------------------------------------
-
-        gunshot_score = max(
-            predictions.get("Gunshot, gunfire", 0),
-            predictions.get("Explosion", 0),
-        )
-
-        if gunshot_score >= 0.30:
-
-            return (
-                "Gunshot / Explosive Discharge",
-                gunshot_score,
-                "CRITICAL"
-            )
-
-        # -------------------------------------------
-        # 2. CHAINSAW
-        # -------------------------------------------
-
-        chainsaw_score = max(
-            predictions.get("Chainsaw", 0),
-            predictions.get("Sawing", 0),
-        )
-
-        if chainsaw_score >= 0.30:
-
-            return (
-                "Chainsaw / Illegal Logging Engine",
-                chainsaw_score,
-                "HIGH"
-            )
-
-        # -------------------------------------------
-        # 3. POSSIBLE LARGE ANIMAL VOCALIZATION
-        # -------------------------------------------
-
-        animal_score = predictions.get("Animal", 0)
-
-        vocalization_score = max(
-            predictions.get("Roar", 0),
-            predictions.get("Trumpet", 0),
-        )
-
-        # Require both animal evidence and
-        # vocalization evidence to reduce false alarms.
-        if (
-            animal_score >= 0.40
-            and vocalization_score >= 0.30
-        ):
-
-            confidence = min(
-                1.0,
-                (animal_score + vocalization_score) / 2
-            )
-
-            return (
-                "Large Wildlife Vocalization",
-                confidence,
-                "MONITORED"
-            )
-
-        # -------------------------------------------
-        # 4. OTHER / AMBIENT AUDIO
-        # -------------------------------------------
-
-        return (
-            "Ambient / Unclassified Acoustic Event",
-            0.70,
-            "LOW"
-        )
-
-    except Exception as error:
-
-        print(
-            f"[YAMNET CLASSIFIER ERROR] {error}"
-        )
-
-        return (
-            "Unclassified Acoustic Event",
-            0.50,
-            "LOW"
-        )
+    result = classifier.predict(decode_audio(Path(audio_path).read_bytes()))
+    return result.label, result.confidence, result.risk_level

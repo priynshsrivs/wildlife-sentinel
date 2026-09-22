@@ -1,111 +1,52 @@
-"""
-Wildlife Sentinel — CLI Pipeline Runner
+"""Paired test-fixture runner. Demo requests never persist or dispatch."""
 
-Sends a paired (image + audio) request to the Audio API's /api/audio/pipeline
-endpoint, which orchestrates:
-    IMAGE → YOLO → vision_result
-    WAV   → audio classifier → audio_result
-    → risk_engine → combined_risk
-    → backend telemetry (if HIGH/CRITICAL) → WebSocket → frontend alert
-"""
-
+import argparse
 import json
+import os
+from pathlib import Path
 import requests
-
-PIPELINE_URL = "http://localhost:5001/api/audio/pipeline"
-
-IMAGE_FILE = "ai_service/test_samples/wildlife/elephant.jpg"
-AUDIO_FILE = "ai_service/audio/test.wav"
+from sentinel_config import AUDIO_API_URL, ROOT
 
 
 def run_pipeline(
-    image_path: str = IMAGE_FILE,
-    audio_path: str = AUDIO_FILE,
-    camera_id:  str = "CAM_NORTH_01",
-    latitude:  float = 12.9716,
-    longitude: float = 79.1585
+    image_path=ROOT / "ai_service/test_samples/wildlife/elephant.jpg",
+    audio_path=ROOT / "ai_service/audio/test.wav",
+    camera_id="CAM_MANUAL_FEED",
+    latitude=12.9698,
+    longitude=79.1559,
+    demo=True,
 ):
-    print("\n" + "=" * 50)
-    print("   WILDLIFE SENTINEL — FULL AI PIPELINE")
-    print("=" * 50)
-    print(f"  Image  : {image_path}")
-    print(f"  Audio  : {audio_path}")
-    print(f"  Camera : {camera_id}  ({latitude}, {longitude})")
-    print("=" * 50)
-
-    try:
-        with open(image_path, "rb") as img_f, open(audio_path, "rb") as aud_f:
-            response = requests.post(
-                PIPELINE_URL,
-                files={
-                    "image": (image_path.split("/")[-1], img_f, "image/jpeg"),
-                    "audio": (audio_path.split("/")[-1], aud_f, "audio/wav"),
-                },
-                data={
-                    "camera_id": camera_id,
-                    "latitude":  str(latitude),
-                    "longitude": str(longitude),
-                },
-                timeout=60
-            )
-    except FileNotFoundError as e:
-        print(f"[ERROR] File not found: {e}")
-        return
-    except requests.exceptions.ConnectionError:
-        print("[ERROR] Audio API is not running.")
-        print("        Start it with:  cd ai_service/audio && python audio_api.py")
-        return
-
-    if response.status_code != 200:
-        print(f"[ERROR] Pipeline returned HTTP {response.status_code}")
-        print(response.text)
-        return
-
+    token = os.getenv("OPERATOR_API_TOKEN") or os.getenv("ADMIN_API_TOKEN")
+    if not token:
+        raise RuntimeError("Configure OPERATOR_API_TOKEN or ADMIN_API_TOKEN")
+    with open(image_path, "rb") as image, open(audio_path, "rb") as audio:
+        response = requests.post(
+            AUDIO_API_URL + "/api/audio/pipeline",
+            headers={"Authorization": "Bearer " + token},
+            files={
+                "image": (Path(image_path).name, image, "image/jpeg"),
+                "audio": (Path(audio_path).name, audio, "audio/wav"),
+            },
+            data={
+                "camera_id": camera_id,
+                "latitude": latitude,
+                "longitude": longitude,
+                "demo": str(demo).lower(),
+            },
+            timeout=120,
+        )
+    response.raise_for_status()
     result = response.json()
-
-    # ── Print Vision Result ────────────────────────────────────
-    print("\n[1] VISION (YOLO)")
-    print(f"    Detection  : {result['vision']['label']}")
-    print(f"    Risk Level : {result['vision']['risk_level']}")
-    if result["vision"]["detections"]:
-        for det in result["vision"]["detections"]:
-            print(f"    └─ {det['label'].upper()} ({int(det['confidence'] * 100)}%)")
-
-    # ── Print Audio Result ─────────────────────────────────────
-    print("\n[2] AUDIO (Acoustic Classifier)")
-    print(f"    Detection  : {result['audio']['label']}")
-    print(f"    Risk Level : {result['audio']['risk_level']}")
-
-    # ── Print Combined Risk ────────────────────────────────────
-    combined = result["combined_risk"]
-    print("\n[3] RISK ENGINE — COMBINED RESULT")
-    print("=" * 50)
-    if combined == "CRITICAL":
-        print("    🚨 CRITICAL — Immediate ranger dispatch required!")
-    elif combined == "HIGH":
-        print("    ⚠️  HIGH RISK — Threat detected")
-    elif combined == "MEDIUM":
-        print("    ⚠️  MEDIUM — Suspicious activity")
-    elif combined == "MONITORED":
-        print("    👁  MONITORED — Wildlife activity logged")
-    else:
-        print("    ✓  LOW — Normal environment")
-
-    print(f"\n    Combined Risk : {combined}")
-    print(f"    Vision Risk   : {result['risk_breakdown']['vision_risk']}")
-    print(f"    Audio Risk    : {result['risk_breakdown']['audio_risk']}")
-
-    # ── Dispatch Status ────────────────────────────────────────
-    print("\n[4] DISPATCH")
-    if result["alert_dispatched"]:
-        print(f"    ✅ Alert sent to backend → WebSocket → Frontend")
-        print(f"    Alert ID : {result['alert_id']}")
-    else:
-        print(f"    ℹ  No dispatch (risk below HIGH threshold)")
-
-    print("=" * 50 + "\n")
+    print(json.dumps(result, indent=2))
     return result
 
 
 if __name__ == "__main__":
-    run_pipeline()
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--real",
+        action="store_true",
+        help="Persist real sensor events; never use for fixtures",
+    )
+    args = parser.parse_args()
+    run_pipeline(demo=not args.real)
