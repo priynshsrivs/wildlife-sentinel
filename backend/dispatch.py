@@ -1,83 +1,152 @@
-import os
+"""Durable outbox dispatch. Webhook credentials are deployment-only secrets."""
+
+import asyncio
+import logging
 import math
-import requests
-import datetime
+import re
+from datetime import timedelta
+import httpx
+from backend.schemas import Location
+from backend.database import iso, utcnow
+from sentinel_config import DISCORD_WEBHOOK_URL
 
-# Paste your Discord Webhook URL here or set it in your environment
-DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
+log = logging.getLogger(__name__)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
-# Base Camp Coordinates (Ranger HQ)
-RANGER_BASE_CAMP = {"name": "Sector 4 Ranger Station", "lat": 12.9700, "lng": 79.1550}
-
-# Protected Core Zone Boundaries (Lat min/max, Lng min/max)
-CORE_ZONE_BOUNDS = {
-    "min_lat": 12.9650,
-    "max_lat": 12.9750,
-    "min_lng": 79.1530,
-    "max_lng": 79.1630
-}
 
 def calculate_distance_km(lat1, lon1, lat2, lon2):
-    """Calculates approximate distance between two GPS points using Haversine formula."""
-    R = 6371.0 # Earth's radius in km
-    dlat = math.radians(lat2 - lat1)
-    dlon = math.radians(lon2 - lon1)
-    a = (math.sin(dlat / 2) ** 2 +
-         math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2)
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-    return round(R * c, 2)
-
-def evaluate_geofence(lat: float, lng: float) -> str:
-    """Determines if coordinates fall into Protected Core or Buffer Corridor."""
-    if (CORE_ZONE_BOUNDS["min_lat"] <= lat <= CORE_ZONE_BOUNDS["max_lat"] and
-        CORE_ZONE_BOUNDS["min_lng"] <= lng <= CORE_ZONE_BOUNDS["max_lng"]):
-        return "CORE SANCTUARY ZONE (HIGH RISK)"
-    return "OUTER BUFFER CORRIDOR"
-
-def send_critical_alert(camera_id: str, threat_level: str, detections: list, location: dict):
-    timestamp = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
-    detected_labels = ", ".join([f"{d['label'].upper()} ({int(d['confidence']*100)}%)" for d in detections])
-    
-    zone_status = evaluate_geofence(location["lat"], location["lng"])
-    dist_to_hq = calculate_distance_km(
-        location["lat"], location["lng"],
-        RANGER_BASE_CAMP["lat"], RANGER_BASE_CAMP["lng"]
+    Location(lat=lat1, lng=lon1)
+    Location(lat=lat2, lng=lon2)
+    a = (
+        math.sin(math.radians(lat2 - lat1) / 2) ** 2
+        + math.cos(math.radians(lat1))
+        * math.cos(math.radians(lat2))
+        * math.sin(math.radians(lon2 - lon1) / 2) ** 2
     )
-    # Estimate response time assuming 25 km/h ranger vehicle travel speed on rough terrain
-    est_eta_mins = max(1, int((dist_to_hq / 25.0) * 60))
+    return 6371.0088 * 2 * math.asin(math.sqrt(min(1, max(0, a))))
 
-    # 1. Console Output for Live Demo
-    print("\n" + "="*60)
-    print(f"🚨 [AUTOMATED RANGER DISPATCH] Threat: {threat_level}")
-    print(f"   Camera Node: {camera_id} | Zone: {zone_status}")
-    print(f"   Targets: {detected_labels}")
-    print(f"   Location: Lat {location['lat']}, Lng {location['lng']}")
-    print(f"   Distance to {RANGER_BASE_CAMP['name']}: {dist_to_hq} km (~{est_eta_mins} min ETA)")
-    print(f"   Timestamp: {timestamp}")
-    print("="*60 + "\n")
 
-    # 2. Discord Webhook Embed
-    if DISCORD_WEBHOOK_URL:
-        payload = {
-            "username": "Wildlife Sentinel Dispatch Bot",
-            "avatar_url": "https://cdn-icons-png.flaticon.com/512/3063/3063822.png",
-            "embeds": [
-                {
-                    "title": f"🚨 {threat_level} THREAT: {camera_id}",
-                    "description": f"Intrusion detected in **{zone_status}**.",
-                    "color": 15158332 if threat_level == "CRITICAL" else 15105570,
-                    "fields": [
-                        {"name": "Identified Targets", "value": detected_labels or "Unknown", "inline": True},
-                        {"name": "Zone", "value": zone_status, "inline": True},
-                        {"name": "Base Distance / ETA", "value": f"{dist_to_hq} km (~{est_eta_mins} mins to intercept)", "inline": False},
-                        {"name": "Coordinates", "value": f"`{location['lat']}, {location['lng']}`", "inline": True},
-                        {"name": "Timestamp", "value": timestamp, "inline": True}
-                    ],
-                    "footer": {"text": "Wildlife Sentinel AI Edge Network"}
-                }
+def evaluate_geofence(lat, lng, settings):
+    radius = settings["geofence_core_radius_m"]
+    if not math.isfinite(radius) or radius <= 0:
+        raise ValueError("Radius must be positive")
+    hq = settings["ranger_hq"]
+    distance = calculate_distance_km(lat, lng, hq["lat"], hq["lng"]) * 1000
+    return "CORE" if distance <= radius + 1e-6 else "BUFFER"
+
+
+def estimate_response_minutes(distance_km, speed_kmh):
+    if (
+        not all(math.isfinite(x) for x in (distance_km, speed_kmh))
+        or distance_km < 0
+        or speed_kmh <= 0
+    ):
+        raise ValueError("Invalid distance or speed")
+    return math.ceil(distance_km / speed_kmh * 60)
+
+
+def valid_webhook(url):
+    return bool(
+        re.fullmatch(r"https://discord[.]com/api/webhooks/[0-9]+/[A-Za-z0-9_-]+", url)
+    )
+
+
+async def dispatch_once(store, client=None):
+    if not DISCORD_WEBHOOK_URL:
+        return
+    if not valid_webhook(DISCORD_WEBHOOK_URL):
+        log.error("dispatch_configuration_invalid")
+        return
+
+    def pending():
+        with store.connection() as db:
+            return [
+                dict(r)
+                for r in db.execute(
+                    "SELECT * FROM dispatch_outbox WHERE status='pending' AND next_attempt<=? ORDER BY id LIMIT 10",
+                    (iso(utcnow()),),
+                )
             ]
-        }
+
+    rows = await asyncio.to_thread(pending)
+
+    async def deliver(http):
+        for row in rows:
+            alert = await asyncio.to_thread(store.get, row["alert_id"])
+            if not alert:
+                continue
+            settings = await asyncio.to_thread(store.settings)
+            loc, hq = alert["location"], settings["ranger_hq"]
+            distance = calculate_distance_km(
+                loc["lat"], loc["lng"], hq["lat"], hq["lng"]
+            )
+            eta = estimate_response_minutes(distance, settings["response_speed_kmh"])
+            payload = {
+                "allowed_mentions": {"parse": []},
+                "content": f"{row['severity']} incident {alert['id']} | {alert['camera_id']} | "
+                f"{evaluate_geofence(loc['lat'], loc['lng'], settings)} | {loc['lat']}, {loc['lng']} | "
+                f"Estimated straight-line response time: {eta} min ({distance:.1f} km). "
+                + ", ".join(d["label"] for d in alert["detections"])[:1000],
+            }
+            status, delay, response = (
+                "pending",
+                min(300, 2 ** (row["attempts"] + 1)),
+                None,
+            )
+            try:
+                response = await http.post(DISCORD_WEBHOOK_URL, json=payload)
+                if response.status_code == 429:
+                    try:
+                        delay = min(
+                            3600, max(1, float(response.json().get("retry_after", 5)))
+                        )
+                        if not math.isfinite(delay):
+                            delay = 5
+                    except (ValueError, TypeError):
+                        delay = 5
+                else:
+                    response.raise_for_status()
+                    if response.status_code not in (200, 204):
+                        raise ValueError("Unexpected Discord response")
+                    status = "sent"
+            except (httpx.HTTPError, ValueError):
+                log.warning(
+                    "dispatch_attempt_failed incident=%s attempt=%s",
+                    alert["id"],
+                    row["attempts"] + 1,
+                )
+                if (
+                    response is not None
+                    and 400 <= response.status_code < 500
+                    and response.status_code != 429
+                ):
+                    status = "failed"
+            if row["attempts"] >= 7 and status == "pending":
+                status = "failed"
+
+            def update():
+                with store.connection(write=True) as db:
+                    db.execute(
+                        "UPDATE dispatch_outbox SET status=?,attempts=attempts+1,next_attempt=? WHERE id=?",
+                        (status, iso(utcnow() + timedelta(seconds=delay)), row["id"]),
+                    )
+
+            await asyncio.to_thread(update)
+            log.info("dispatch_result incident=%s status=%s", alert["id"], status)
+
+    if client:
+        await deliver(client)
+    else:
+        async with httpx.AsyncClient(
+            timeout=5, follow_redirects=False, trust_env=False
+        ) as http:
+            await deliver(http)
+
+
+async def dispatch_worker(store):
+    while True:
         try:
-            requests.post(DISCORD_WEBHOOK_URL, json=payload, timeout=3)
-        except Exception as e:
-            print(f"[-] Discord Webhook failed: {e}")
+            await dispatch_once(store)
+        except Exception:
+            log.exception("dispatch_worker_failed")
+        await asyncio.sleep(2)

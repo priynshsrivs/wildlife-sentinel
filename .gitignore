@@ -1,10 +1,19 @@
 node_modules/
 *.pt
 __pycache__/
+.pytest_cache/
+.ruff_cache/
+.venv*/
 .env
+.env.*
+!.env.example
+!frontend/.env.example
 dist/
-
-backend/venv/
-
-# SQLite database — regenerated locally on each run
 *.db
+*.db-wal
+*.db-shm
+*.bak
+data/
+models/
+*.log
+data-audit.json

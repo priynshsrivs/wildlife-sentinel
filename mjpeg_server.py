@@ -1,272 +1,163 @@
-from flask import Flask, Response
-import cv2
+"""Authenticated MJPEG service with a single shared camera producer."""
+
+import atexit
+import hmac
+import logging
+import os
+import threading
 import time
+import cv2
+from flask import Flask, Response, request, abort
+from dotenv import load_dotenv
 
+load_dotenv()
+log = logging.getLogger(__name__)
 app = Flask(__name__)
+CAMERA_INDEX = int(os.getenv("CAMERA_INDEX", "0"))
+TOKEN = os.getenv("CAMERA_STREAM_TOKEN", "")
+condition = threading.Condition()
+stop_event = threading.Event()
+frame = None
+last_frame = 0.0
+producer = None
+start_lock = threading.Lock()
 
-# =========================================================
-# CAMERA CONFIGURATION
-# =========================================================
 
-CAMERA_INDEX = 0
+def capture_loop():
+    global frame, last_frame
+    capture = None
+    backoff = 1
+    try:
+        while not stop_event.is_set():
+            if capture is None:
+                capture = cv2.VideoCapture(
+                    CAMERA_INDEX, cv2.CAP_DSHOW if os.name == "nt" else cv2.CAP_ANY
+                )
+                capture.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+                capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+            success, image = capture.read()
+            if not success:
+                capture.release()
+                capture = None
+                with condition:
+                    frame = None
+                    condition.notify_all()
+                log.warning("camera_unavailable")
+                stop_event.wait(backoff)
+                backoff = min(30, backoff * 2)
+                continue
+            success, encoded = cv2.imencode(
+                ".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 80]
+            )
+            if success:
+                with condition:
+                    frame = encoded.tobytes()
+                    last_frame = time.monotonic()
+                    condition.notify_all()
+                backoff = 1
+            stop_event.wait(0.1)
+    finally:
+        if capture is not None:
+            capture.release()
 
 
-camera = None
+def ensure_producer():
+    global producer
+    with start_lock:
+        if producer is None:
+            producer = threading.Thread(
+                target=capture_loop, name="mjpeg-camera", daemon=True
+            )
+            producer.start()
 
 
-# =========================================================
-# OPEN CAMERA
-# =========================================================
+def shutdown():
+    stop_event.set()
+    with condition:
+        condition.notify_all()
+    if producer is not None:
+        producer.join(timeout=3)
 
-def open_camera():
-    global camera
 
-    if camera is not None:
-        camera.release()
+atexit.register(shutdown)
 
-    print("📷 Opening camera via DirectShow...")
-    
-    # Force Windows DirectShow backend to bypass Windows permission blocks
-    camera = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_DSHOW)
 
-    camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-    camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-    camera.set(cv2.CAP_PROP_FPS, 30)
+@app.before_request
+def authenticate():
+    if request.path == "/health":
+        return
+    supplied = request.headers.get("Authorization", "")
+    if not TOKEN or not hmac.compare_digest(supplied, "Bearer " + TOKEN):
+        abort(401)
 
-    if camera.isOpened():
-        print("✅ Camera connected successfully!")
-        return True
-
-    print("❌ Camera could not be opened")
-    return False
-# =========================================================
-# CAMERA FRAME GENERATOR
-# =========================================================
 
 def generate_frames():
-    global camera
-
-    while True:
-
-        # Try to reconnect if camera is unavailable
-        if camera is None or not camera.isOpened():
-
-            if not open_camera():
-
-                print(
-                    "⏳ Waiting for camera..."
-                )
-
-                time.sleep(2)
-
-                continue
-
-        success, frame = camera.read()
-
-        # If frame failed, reconnect instead of exiting
-        if not success:
-
-            print(
-                "⚠️ Camera frame failed."
+    previous = 0
+    while not stop_event.is_set():
+        with condition:
+            condition.wait_for(
+                lambda: last_frame > previous or stop_event.is_set(), timeout=5
             )
-
-            camera.release()
-
-            camera = None
-
-            time.sleep(1)
-
-            continue
-
-        # Encode frame as JPEG
-        success, buffer = cv2.imencode(
-            ".jpg",
-            frame,
-            [
-                cv2.IMWRITE_JPEG_QUALITY,
-                80
-            ]
-        )
-
-        if not success:
-            continue
-
-        frame_bytes = buffer.tobytes()
-
-        # MJPEG stream format
+            if stop_event.is_set():
+                return
+            if frame is None or time.monotonic() - last_frame > 5:
+                return
+            data = frame
+            previous = last_frame
         yield (
-            b"--frame\r\n"
-            b"Content-Type: image/jpeg\r\n"
-            b"Content-Length: "
-            + str(len(frame_bytes)).encode()
+            b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: "
+            + str(len(data)).encode()
             + b"\r\n\r\n"
-            + frame_bytes
+            + data
             + b"\r\n"
         )
 
 
-# =========================================================
-# HOME PAGE
-# =========================================================
-
-@app.route("/")
+@app.get("/")
 def index():
-
-    return """
-    <!DOCTYPE html>
-
-    <html>
-
-    <head>
-
-        <title>
-            Wildlife Sentinel Camera
-        </title>
-
-        <style>
-
-            body {
-                margin: 0;
-                background: #020604;
-                color: white;
-                font-family: Arial, sans-serif;
-                text-align: center;
-            }
-
-            h1 {
-                margin-top: 25px;
-                font-size: 24px;
-            }
-
-            .status {
-                color: #4ade80;
-                margin-bottom: 20px;
-            }
-
-            img {
-                width: 90%;
-                max-width: 1280px;
-                border-radius: 14px;
-                border: 1px solid rgba(255,255,255,.12);
-            }
-
-        </style>
-
-    </head>
-
-    <body>
-
-        <h1>
-            🦌 Wildlife Sentinel
-        </h1>
-
-        <div class="status">
-            ● LIVE CAMERA FEED
-        </div>
-
-        <img
-            src="/video"
-            alt="Live Camera"
-        >
-
-    </body>
-
-    </html>
-    """
-
-
-# =========================================================
-# MJPEG VIDEO STREAM
-# =========================================================
-
-@app.route("/video")
-def video():
-
-    return Response(
-        generate_frames(),
-        mimetype=(
-            "multipart/x-mixed-replace; "
-            "boundary=frame"
-        )
-    )
-
-
-# =========================================================
-# HEALTH CHECK
-# =========================================================
-
-@app.route("/health")
-def health():
-
-    connected = (
-        camera is not None
-        and camera.isOpened()
-    )
-
     return {
-        "status": "online",
-        "camera": (
-            "connected"
-            if connected
-            else "disconnected"
-        ),
-        "camera_index": CAMERA_INDEX,
-        "stream": "/video"
+        "service": "Wildlife Sentinel MJPEG",
+        "stream": "/video",
+        "authentication": "Bearer CAMERA_STREAM_TOKEN",
     }
 
 
-# =========================================================
-# START SERVER
-# =========================================================
+@app.get("/video")
+def video():
+    ensure_producer()
+    return Response(
+        generate_frames(),
+        mimetype="multipart/x-mixed-replace; boundary=frame",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/health")
+def health():
+    connected = frame is not None and time.monotonic() - last_frame < 5
+    return {
+        "status": "ONLINE" if connected else "OFFLINE",
+        "camera_index": CAMERA_INDEX,
+    }
+
 
 if __name__ == "__main__":
+    from waitress import serve
 
-    print()
-    print("=" * 55)
-    print(
-        "🦌 WILDLIFE SENTINEL "
-        "MJPEG CAMERA SERVER"
+    logging.basicConfig(level=logging.INFO)
+    if not TOKEN:
+        raise SystemExit("Set CAMERA_STREAM_TOKEN before starting the camera server")
+    log.info(
+        "MJPEG service listening on http://127.0.0.1:8080; use the authenticated backend preview"
     )
-    print("=" * 55)
-
-    print(
-        f"📷 Camera index: {CAMERA_INDEX}"
-    )
-
-    print(
-        "🌐 Stream: "
-        "http://0.0.0.0:8080/video"
-    )
-
-    print(
-        "🖥️ Dashboard: "
-        "http://0.0.0.0:8080/"
-    )
-
-    print("=" * 55)
-
-    # Try opening camera before starting Flask
-    if open_camera():
-
-        print(
-            "🚀 Camera server ready!"
+    try:
+        serve(
+            app,
+            host=os.getenv("MJPEG_BIND_HOST", "127.0.0.1"),
+            port=8080,
+            threads=8,
+            connection_limit=16,
+            channel_timeout=30,
         )
-
-    else:
-
-        print(
-            "⚠️ Camera unavailable."
-        )
-
-        print(
-            "The server will keep trying "
-            "to reconnect."
-        )
-
-    print()
-
-    app.run(
-        host="0.0.0.0",
-        port=8080,
-        threaded=True
-    )
+    finally:
+        shutdown()

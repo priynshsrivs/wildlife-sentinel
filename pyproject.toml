@@ -1,0 +1,6 @@
+[tool.pytest.ini_options]
+testpaths = ["tests", "ai_service/audio/test_yamnet.py"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+target-version = "py313"
