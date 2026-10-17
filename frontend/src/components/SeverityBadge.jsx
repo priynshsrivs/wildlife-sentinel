@@ -5,7 +5,7 @@ export default function SeverityBadge({
   const severity = String(level).toUpperCase();
   const tone = resolved
     ? "resolved"
-    : ["CRITICAL", "HIGH", "MONITORED", "LOW"].includes(severity)
+    : ["CRITICAL", "HIGH", "MONITORED", "MEDIUM", "LOW"].includes(severity)
       ? severity.toLowerCase()
       : "monitored";
   return (

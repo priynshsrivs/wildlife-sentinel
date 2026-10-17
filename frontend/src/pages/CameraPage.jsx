@@ -16,6 +16,8 @@ import SectionHeader from "../components/SectionHeader";
 import StatusBadge from "../components/StatusBadge";
 
 export default function CameraPage({
+  canOperate = false,
+  uploadError,
   analyzingUpload,
   audioInputRef,
   backendOnline,
@@ -35,6 +37,16 @@ export default function CameraPage({
 }) {
   return (
     <div className="camera-hub-page">
+      {!canOperate && (
+        <p className="read-only-note">
+          Viewer access: an operator or administrator can ingest telemetry.
+        </p>
+      )}
+      {uploadError && (
+        <p className="inline-error" role="alert">
+          {uploadError}
+        </p>
+      )}
       <div
         className="workspace-tabs"
         style={{
@@ -108,6 +120,7 @@ export default function CameraPage({
               <GlassButton
                 success={!isWebcamStreaming}
                 danger={isWebcamStreaming}
+                disabled={!canOperate}
                 onClick={() => setIsWebcamStreaming(!isWebcamStreaming)}
                 icon={
                   isWebcamStreaming ? <Square size={14} /> : <Play size={14} />
@@ -339,7 +352,7 @@ export default function CameraPage({
             }}
           >
             <button
-              disabled={uploading}
+              disabled={uploading || !canOperate}
               onClick={() => imageInputRef.current?.click()}
               className="glass-panel ingestion-card"
               style={{
@@ -373,7 +386,7 @@ export default function CameraPage({
             </button>
 
             <button
-              disabled={uploading}
+              disabled={uploading || !canOperate}
               onClick={() => videoInputRef.current?.click()}
               className="glass-panel ingestion-card"
               style={{
@@ -406,7 +419,7 @@ export default function CameraPage({
             </button>
 
             <button
-              disabled={uploading}
+              disabled={uploading || !canOperate}
               onClick={() => audioInputRef.current?.click()}
               className="glass-panel ingestion-card"
               style={{

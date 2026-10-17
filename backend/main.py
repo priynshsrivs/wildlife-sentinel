@@ -35,11 +35,16 @@ from ai_service.vision import vision
 from ai_service.governor import AIComputeGovernor
 from ai_service.heatmap import RiskHeatmapEngine
 from ai_service.multi_camera import MultiCameraCorrelator
-from ai_service.xai import generate_explainable_alert
 from ai_service.evidence import EvidenceTimeline
 from backend.hard_negatives import HardNegativeManager
 from backend.database import store, utcnow
-from backend.schemas import SensorInput, Telemetry, SettingsPayload, Risk, RangerFeedbackPayload
+from backend.schemas import (
+    SensorInput,
+    Telemetry,
+    SettingsPayload,
+    Risk,
+    RangerFeedbackPayload,
+)
 from backend.security import require, identity, issue_ticket, consume_ticket, rate_key
 from backend.media import image_upload, read_upload, temporary_file
 from backend.middleware import BodyLimitMiddleware
@@ -50,7 +55,7 @@ from backend.cameras import camera_worker, camera_status, heartbeat, validate_en
 governor = AIComputeGovernor()
 heatmap_engine = RiskHeatmapEngine()
 multi_camera_correlator = MultiCameraCorrelator()
-hard_negative_mgr = HardNegativeManager(store.connection)
+hard_negative_mgr = HardNegativeManager(lambda: store.connection(write=True))
 evidence_timeline = EvidenceTimeline()
 
 log = logging.getLogger(__name__)
@@ -217,13 +222,28 @@ async def websocket_alerts(websocket: WebSocket):
     ):
         await websocket.close(code=1008)
         return
-    await manager.connect(websocket)
+    if not await manager.connect(websocket):
+        return
     try:
         while True:
-            message = await websocket.receive_json()
-            if message.get("type") == "ACK":
+            envelope = await websocket.receive()
+            if envelope["type"] == "websocket.disconnect":
+                break
+            raw = envelope.get("text")
+            if not isinstance(raw, str):
+                await websocket.close(code=1003)
+                return
+            if len(raw) > 4096:
+                await websocket.close(code=1009)
+                return
+            message = json.loads(raw)
+            if not isinstance(message, dict):
+                continue
+            if message.get("type") == "ACK" and isinstance(
+                message.get("event_id"), str
+            ):
                 manager.acknowledge(websocket, message.get("event_id"))
-    except (WebSocketDisconnect, ValueError, TypeError):
+    except (WebSocketDisconnect, ValueError, TypeError, RecursionError):
         pass
     finally:
         manager.disconnect(websocket)
@@ -285,7 +305,14 @@ async def detect_feed(
         }
 
 
-def process_video(data, suffix, sample_rate, threshold):
+def process_video(
+    data,
+    suffix,
+    sample_rate,
+    threshold,
+    camera_id="CAM_VIDEO_CCTV",
+    geofence_status="BUFFER",
+):
     results = []
     with temporary_file(data, suffix) as path:
         capture = cv2.VideoCapture(path)
@@ -317,7 +344,13 @@ def process_video(data, suffix, sample_rate, threshold):
                     raise HTTPException(413, "Video frame dimensions exceed limits")
                 if decoded % step == 0:
                     image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-                    prediction = vision.predict(image, threshold, skip_motion_check=True)
+                    prediction = vision.predict(
+                        image,
+                        threshold,
+                        camera_id=camera_id,
+                        geofence_status=geofence_status,
+                        skip_motion_check=True,
+                    )
                     results.append(
                         (
                             decoded / fps,
@@ -349,14 +382,23 @@ async def detect_video(
             config.MAX_VIDEO_BYTES,
             {
                 ".mp4": {"video/mp4"},
-                ".avi": {"video/x-msvideo"},
+                ".avi": {"video/x-msvideo", "video/avi", "video/msvideo"},
                 ".mov": {"video/quicktime"},
                 ".webm": {"video/webm"},
             },
         )
         settings = await run_in_threadpool(store.settings)
+        from backend.dispatch import evaluate_geofence
+
+        zone = evaluate_geofence(node.latitude, node.longitude, settings)
         results, decoded, fps = await run_in_threadpool(
-            process_video, data, suffix, sample_rate, settings["confidence_threshold"]
+            process_video,
+            data,
+            suffix,
+            sample_rate,
+            settings["confidence_threshold"],
+            camera_id,
+            zone,
         )
         incidents = {}
         base_time = utcnow() - timedelta(seconds=decoded / fps)
@@ -455,16 +497,23 @@ def get_alerts(
     return result
 
 
-@app.get("/api/alerts/{alert_id}/image", dependencies=[read_access])
-def alert_image(alert_id: str):
+def stored_image_path(alert_id: str):
     with store.connection() as db:
         row = db.execute(
             "SELECT image_reference FROM alerts WHERE id=?", (alert_id,)
         ).fetchone()
     if not row or not row[0]:
-        raise HTTPException(404, "Image not found")
+        return None
     path = (store.media_dir / row[0]).resolve()
     if path.parent != store.media_dir.resolve() or not path.is_file():
+        return None
+    return path
+
+
+@app.get("/api/alerts/{alert_id}/image", dependencies=[read_access])
+def alert_image(alert_id: str):
+    path = stored_image_path(alert_id)
+    if path is None:
         raise HTTPException(404, "Image not found")
     return FileResponse(
         path, media_type="image/jpeg", headers={"Cache-Control": "private, no-store"}
@@ -479,6 +528,10 @@ async def resolve_alert(alert_id: str):
                 "UPDATE alerts SET resolved=1 WHERE id=?", (alert_id,)
             ).rowcount:
                 raise HTTPException(404, "Incident not found")
+            db.execute(
+                "UPDATE dispatch_outbox SET status='cancelled' WHERE alert_id=? AND status='pending'",
+                (alert_id,),
+            )
         return store.get(alert_id)
 
     alert = await run_in_threadpool(update)
@@ -490,6 +543,9 @@ async def resolve_alert(alert_id: str):
 async def clear_alerts():
     def clear():
         with store.connection(write=True) as db:
+            db.execute(
+                "DELETE FROM ranger_feedback WHERE alert_id IN (SELECT id FROM alerts)"
+            )
             return db.execute("DELETE FROM alerts").rowcount
 
     deleted = await run_in_threadpool(clear)
@@ -588,7 +644,7 @@ def get_governor_state():
     cpu = psutil.cpu_percent()
     decision = governor.decide(
         has_motion=False,
-        active_tracks_count=len(vision.tracker.get_active_tracks()),
+        active_tracks_count=vision.active_track_count(),
         cpu_utilization_pct=cpu,
     )
     return {
@@ -648,10 +704,9 @@ def submit_ranger_feedback(alert_id: str, payload: RangerFeedbackPayload):
     if not alert:
         raise HTTPException(404, "Alert not found")
     img_bytes = None
-    if alert.get("image_reference"):
-        path = store.media_dir / alert["image_reference"]
-        if path.is_file():
-            img_bytes = path.read_bytes()
+    path = stored_image_path(alert_id)
+    if path is not None:
+        img_bytes = path.read_bytes()
     return hard_negative_mgr.record_feedback(
         alert_id=alert_id,
         feedback=payload.feedback_type,
@@ -675,29 +730,44 @@ def explain_alert(alert_id: str):
     sett = store.settings()
     from backend.dispatch import evaluate_geofence
 
-    geofence_status = evaluate_geofence(alert["latitude"], alert["longitude"], sett)
-    explanation = generate_explainable_alert(
-        detections=alert.get("detections", []),
-        threat_level=alert.get("threat_level", "LOW"),
-        detection_level="THREAT"
-        if alert.get("threat_level") in {"HIGH", "CRITICAL"}
-        else "SUSPICIOUS",
-        vision_confidence=alert.get("vision_confidence")
-        or alert.get("peak_confidence")
-        or 0.80,
-        hits_confirmed=alert.get("frame_count", 1),
-        total_frames_sampled=max(1, alert.get("frame_count", 1) + 2),
-        is_night=False,
-        in_core_geofence=(geofence_status == "CORE"),
-        base_threshold=sett.get("confidence_threshold", 0.50),
-    )
+    location = alert["location"]
+    geofence_status = evaluate_geofence(location["lat"], location["lng"], sett)
+    detections = alert.get("detections", [])
+    confidence = alert.get("peak_confidence", 0)
+    with store.connection() as db:
+        delivery = [
+            dict(row)
+            for row in db.execute(
+                "SELECT severity,status FROM dispatch_outbox WHERE alert_id=? ORDER BY id",
+                (alert_id,),
+            )
+        ]
     return {
-        "summary": explanation.summary_sentence,
-        "evidence_checklist": explanation.evidence_checklist,
-        "model_cascade_trace": explanation.model_cascade_trace,
-        "temporal_confirmation_ratio": explanation.temporal_confirmation_ratio,
-        "threshold_audit": explanation.threshold_audit,
-        "recommended_action": explanation.operational_action_recommended,
+        "summary": f"Recorded {alert['threat_level']} event at {alert['camera_id']}: "
+        + (", ".join(d["label"] for d in detections) or "No detection labels")
+        + ".",
+        "evidence_checklist": [
+            {
+                "modality": "Acoustic" if d.get("kind") == "audio" else "Vision",
+                "finding": f"{d['label']} detected ({d['confidence'] * 100:.1f}% confidence)",
+            }
+            for d in detections
+        ],
+        "model_cascade_trace": {
+            "recorded_models": alert.get("model_versions", {}),
+            "audit_status": "Historical escalation trace not recorded",
+        },
+        "temporal_confirmation_ratio": None,
+        "frame_count": alert.get("frame_count", 1),
+        "confidence": confidence,
+        "modality": alert.get("modality", "Unknown"),
+        "current_geofence": geofence_status,
+        "threshold_audit": {
+            "current_confidence_threshold": sett["confidence_threshold"],
+            "historical_threshold": None,
+        },
+        "dispatch": delivery,
+        "recommended_action": "Review this incident and verify field conditions before responding.",
     }
 
 

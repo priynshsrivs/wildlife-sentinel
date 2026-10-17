@@ -5,6 +5,7 @@ import { Globe } from "lucide-react";
 import { COLORS } from "../constants/theme";
 
 export default function MonitoringPage({
+  canAdmin = false,
   availableStreams,
   handleSettingsUpdate,
   monitoringTab,
@@ -142,6 +143,7 @@ export default function MonitoringPage({
               <input
                 id={`stream-${node}`}
                 type="checkbox"
+                disabled={!canAdmin}
                 checked={Boolean(remoteStreams[node])}
                 onChange={(e) =>
                   handleSettingsUpdate({

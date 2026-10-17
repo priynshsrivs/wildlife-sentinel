@@ -6,7 +6,6 @@ import shutil
 import subprocess
 import sys
 import time
-from pathlib import Path
 import httpx
 from sentinel_config import ROOT, DATA_DIR, API_TOKENS, SERVICE_TOKEN
 
@@ -52,7 +51,7 @@ def main():
         print('==================================================================')
         print(' Wildlife Sentinel Services are Running!')
         print(' Dashboard URL: http://127.0.0.1:5173')
-        print(f" Admin Sign-In Token: {API_TOKENS.get('admin', '')}")
+        print(" Sign in using the role token stored in your local .env file.")
         print(' Logs: data/logs/ | Press Ctrl+C in this window to stop all services')
         print('==================================================================')
         while all(p.poll() is None for p in processes):time.sleep(1)

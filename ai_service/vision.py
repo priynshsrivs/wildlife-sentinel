@@ -6,6 +6,7 @@ Integrates motion filtering, multi-target tracking, temporal confirmation, and d
 """
 
 import hashlib
+from collections import OrderedDict
 import logging
 import threading
 import time
@@ -15,7 +16,11 @@ from PIL import Image
 from fastapi import HTTPException
 
 import sentinel_config as config
-from ai_service.context import evaluate_contextual_threat, evaluate_roi_matches, get_time_of_day
+from ai_service.context import (
+    evaluate_contextual_threat,
+    evaluate_roi_matches,
+    get_time_of_day,
+)
 from ai_service.low_light import analyze_and_enhance_low_light
 from ai_service.motion import MotionDetector
 from ai_service.taxonomy import ALL_THREAT_CLASSES, WILDLIFE_CLASSES, get_active_classes
@@ -33,6 +38,8 @@ class CascadedVisionEngine:
         self.escalation_version = "unavailable"
         self.hardware_backend = "CPU"
         self.lock = threading.Lock()
+        self.processing_lock = threading.RLock()
+        self.camera_states = OrderedDict()
 
         self.motion_detector = MotionDetector(threshold=config.MOTION_THRESHOLD)
         self.tracker = ObjectTracker(
@@ -80,19 +87,27 @@ class CascadedVisionEngine:
                 self.hardware_backend = "CPU"
 
             # Stage 1: Nano Model
-            nano_path = config.NANO_MODEL_PATH if config.NANO_MODEL_PATH.is_file() else config.VISION_MODEL_PATH
+            nano_path = (
+                config.NANO_MODEL_PATH
+                if config.NANO_MODEL_PATH.is_file()
+                else config.VISION_MODEL_PATH
+            )
             if not nano_path.is_file():
                 raise FileNotFoundError(f"Nano model not found at {nano_path}")
 
             self.nano_model = YOLO(str(nano_path))
             with nano_path.open("rb") as f:
-                self.nano_version = "yolo-" + hashlib.file_digest(f, "sha256").hexdigest()[:16]
+                self.nano_version = (
+                    "yolo-" + hashlib.file_digest(f, "sha256").hexdigest()[:16]
+                )
 
             # Stage 2: Escalation Model
             if config.ESCALATION_MODEL_PATH.is_file():
                 self.escalation_model = YOLO(str(config.ESCALATION_MODEL_PATH))
                 with config.ESCALATION_MODEL_PATH.open("rb") as f:
-                    self.escalation_version = "yolo-" + hashlib.file_digest(f, "sha256").hexdigest()[:16]
+                    self.escalation_version = (
+                        "yolo-" + hashlib.file_digest(f, "sha256").hexdigest()[:16]
+                    )
             else:
                 self.escalation_model = None
                 self.escalation_version = "none"
@@ -117,7 +132,19 @@ class CascadedVisionEngine:
             self.ready = False
             log.exception("vision_initialization_failed")
 
-    def predict(
+    def active_track_count(self):
+        with self.processing_lock:
+            return sum(
+                len(tracker.get_active_tracks())
+                for _, tracker in self.camera_states.values()
+            )
+
+    def predict(self, *args, **kwargs):
+        # Tracking and motion state mutate across the full pipeline, not just the model call.
+        with self.processing_lock:
+            return self._predict(*args, **kwargs)
+
+    def _predict(
         self,
         image: Image.Image | np.ndarray,
         threshold: float | None = None,
@@ -132,25 +159,44 @@ class CascadedVisionEngine:
         if not self.ready or self.nano_model is None:
             raise HTTPException(503, "MODEL_ERROR: vision model unavailable")
 
-        conf_threshold = threshold if threshold is not None else config.DEFAULT_SETTINGS["confidence_threshold"]
+        conf_threshold = (
+            threshold
+            if threshold is not None
+            else config.DEFAULT_SETTINGS["confidence_threshold"]
+        )
         now = time.monotonic() if timestamp is None else timestamp
         timings = {}
+        if camera_id not in self.camera_states:
+            if len(self.camera_states) >= 128:
+                expired, _ = self.camera_states.popitem(last=False)
+                self.last_escalation_time.pop(expired, None)
+            self.camera_states[camera_id] = (
+                MotionDetector(threshold=config.MOTION_THRESHOLD),
+                ObjectTracker(
+                    confirmation_hits=config.TEMPORAL_CONFIRMATION_FRAMES,
+                    window_seconds=config.TEMPORAL_CONFIRMATION_WINDOW_SECONDS,
+                ),
+            )
+        self.camera_states.move_to_end(camera_id)
+        motion_detector, tracker = self.camera_states[camera_id]
         t_start = time.perf_counter()
 
         # Step 1: Low-Light Analysis & Selective Enhancement
         t0 = time.perf_counter()
         if config.LOW_LIGHT_ENHANCEMENT:
-            processed_image, low_light_enhanced, luminance = analyze_and_enhance_low_light(image)
+            processed_image, low_light_enhanced, _luminance = (
+                analyze_and_enhance_low_light(image)
+            )
         else:
-            processed_image, low_light_enhanced, luminance = image, False, 100.0
+            processed_image, low_light_enhanced, _luminance = image, False, 100.0
         timings["preprocess_ms"] = round((time.perf_counter() - t0) * 1000, 2)
 
         # Step 2: Motion Detection (Skip compute on static camera scenes)
         t0 = time.perf_counter()
         if config.MOTION_FILTER_ENABLED and not skip_motion_check:
-            motion = self.motion_detector.evaluate(processed_image)
+            motion = motion_detector.evaluate(processed_image)
             timings["motion_ms"] = motion.duration_ms
-            if not motion.has_motion and not self.tracker.get_active_tracks():
+            if not motion.has_motion and not tracker.get_active_tracks():
                 # Static scene with no active tracks: return empty immediately
                 total_ms = round((time.perf_counter() - t_start) * 1000, 2)
                 timings["total_ms"] = total_ms
@@ -213,7 +259,10 @@ class CascadedVisionEngine:
             for det in raw_detections:
                 c = det["confidence"]
                 # Ambiguous detection or uncertain threat cue warrants escalation
-                if config.NANO_CONFIDENCE_LOW <= c < config.NANO_CONFIDENCE_HIGH and det["kind"] == "object":
+                if (
+                    config.NANO_CONFIDENCE_LOW <= c < config.NANO_CONFIDENCE_HIGH
+                    and det["kind"] == "object"
+                ):
                     should_escalate = True
                     break
 
@@ -250,12 +299,14 @@ class CascadedVisionEngine:
         else:
             timings["escalation_ms"] = 0.0
             # Filter nano detections by final confidence threshold
-            raw_detections = [d for d in raw_detections if d["confidence"] >= conf_threshold]
+            raw_detections = [
+                d for d in raw_detections if d["confidence"] >= conf_threshold
+            ]
 
         # Step 5: Object Tracking
         t0 = time.perf_counter()
         if config.TRACKING_ENABLED:
-            tracks = self.tracker.update(raw_detections, timestamp=now)
+            tracks = tracker.update(raw_detections, timestamp=now)
             timings["tracking_ms"] = round((time.perf_counter() - t0) * 1000, 2)
             if escalated:
                 for t in tracks:
@@ -269,7 +320,9 @@ class CascadedVisionEngine:
         contextual_detections = evaluate_roi_matches(raw_detections, rois)
 
         detected_labels = {d["label"] for d in contextual_detections}
-        matched_rois = [roi for d in contextual_detections for roi in d.get("matched_rois", [])]
+        matched_rois = [
+            roi for d in contextual_detections for roi in d.get("matched_rois", [])
+        ]
 
         detection_level, risk_level = evaluate_contextual_threat(
             detected_labels,
@@ -278,6 +331,12 @@ class CascadedVisionEngine:
             matched_rois=matched_rois,
         )
 
+        if (
+            config.VISION_MODE == "WILDLIFE_MONITORING"
+            and detected_labels & WILDLIFE_CLASSES
+            and not detected_labels & ALL_THREAT_CLASSES
+        ):
+            risk_level = "MONITORED"
         total_ms = round((time.perf_counter() - t_start) * 1000, 2)
         timings["total_ms"] = total_ms
 

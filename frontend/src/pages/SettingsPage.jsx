@@ -3,6 +3,7 @@ import { Settings as SettingsIcon, CheckCircle2 } from "lucide-react";
 import { COLORS } from "../constants/theme";
 
 export default function SettingsPage({
+  canAdmin = false,
   confThreshold,
   discordConfigured,
   geofenceRadius,
@@ -24,6 +25,11 @@ export default function SettingsPage({
         icon={<SettingsIcon size={18} color="#4ade80" />}
       />
 
+      {!canAdmin && (
+        <p className="read-only-note">
+          Settings are read-only. An administrator can change them.
+        </p>
+      )}
       {/* Confidence */}
       <div
         style={{
@@ -58,6 +64,7 @@ export default function SettingsPage({
         </div>
 
         <input
+          disabled={!canAdmin}
           id="confidence-threshold"
           type="range"
           min=".1"
@@ -110,6 +117,7 @@ export default function SettingsPage({
         </label>
 
         <input
+          disabled={!canAdmin}
           id="geofence-radius"
           type="number"
           min="50"

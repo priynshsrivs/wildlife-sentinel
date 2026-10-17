@@ -7,11 +7,17 @@ Collects ranger verification on alerts:
 """
 
 import json
-from pathlib import Path
+import hashlib
 from typing import Literal
 from sentinel_config import DATA_DIR
 
-FeedbackType = Literal["TRUE_THREAT", "FALSE_POSITIVE", "AUTHORIZED_PERSON", "AUTHORIZED_VEHICLE", "UNCERTAIN"]
+FeedbackType = Literal[
+    "TRUE_THREAT",
+    "FALSE_POSITIVE",
+    "AUTHORIZED_PERSON",
+    "AUTHORIZED_VEHICLE",
+    "UNCERTAIN",
+]
 
 HARD_NEGATIVES_DIR = DATA_DIR / "hard_negatives"
 HARD_NEGATIVES_DIR.mkdir(parents=True, exist_ok=True)
@@ -25,7 +31,7 @@ class HardNegativeManager:
 
     def record_feedback(
         self,
-        alert_id: int,
+        alert_id: str,
         feedback: FeedbackType,
         ranger_id: str = "ranger_default",
         notes: str = "",
@@ -45,8 +51,12 @@ class HardNegativeManager:
 
         # If marked FALSE_POSITIVE, persist to hard-negative active learning dataset
         exported = False
-        if feedback in {"FALSE_POSITIVE", "AUTHORIZED_PERSON", "AUTHORIZED_VEHICLE"} and image_bytes:
-            img_path = HARD_NEGATIVES_DIR / "images" / f"alert_{alert_id}.jpg"
+        if (
+            feedback in {"FALSE_POSITIVE", "AUTHORIZED_PERSON", "AUTHORIZED_VEHICLE"}
+            and image_bytes
+        ):
+            sample_id = hashlib.sha256(str(alert_id).encode()).hexdigest()
+            img_path = HARD_NEGATIVES_DIR / "images" / f"alert_{sample_id}.jpg"
             img_path.write_bytes(image_bytes)
 
             # Export metadata record
@@ -73,11 +83,19 @@ class HardNegativeManager:
     def compute_metrics(self) -> dict:
         """Calculate camera-specific and class-specific error rates."""
         with self.get_db() as db:
-            total_feedback = db.execute("SELECT count(*) FROM ranger_feedback").fetchone()[0]
+            total_feedback = db.execute(
+                "SELECT count(*) FROM ranger_feedback"
+            ).fetchone()[0]
             by_type = dict(
-                db.execute("SELECT feedback_type, count(*) FROM ranger_feedback GROUP BY feedback_type")
+                db.execute(
+                    "SELECT feedback_type, count(*) FROM ranger_feedback GROUP BY feedback_type"
+                )
             )
-            false_positives = by_type.get("FALSE_POSITIVE", 0) + by_type.get("AUTHORIZED_PERSON", 0) + by_type.get("AUTHORIZED_VEHICLE", 0)
+            false_positives = (
+                by_type.get("FALSE_POSITIVE", 0)
+                + by_type.get("AUTHORIZED_PERSON", 0)
+                + by_type.get("AUTHORIZED_VEHICLE", 0)
+            )
             true_threats = by_type.get("TRUE_THREAT", 0)
 
             # Camera specific breakdown
@@ -93,7 +111,11 @@ class HardNegativeManager:
         camera_breakdown: dict[str, dict] = {}
         for cid, ftype, count in cam_stats:
             if cid not in camera_breakdown:
-                camera_breakdown[cid] = {"total": 0, "false_positives": 0, "true_threats": 0}
+                camera_breakdown[cid] = {
+                    "total": 0,
+                    "false_positives": 0,
+                    "true_threats": 0,
+                }
             camera_breakdown[cid]["total"] += count
             if ftype in {"FALSE_POSITIVE", "AUTHORIZED_PERSON", "AUTHORIZED_VEHICLE"}:
                 camera_breakdown[cid]["false_positives"] += count
@@ -101,13 +123,16 @@ class HardNegativeManager:
                 camera_breakdown[cid]["true_threats"] += count
 
         evaluated_total = false_positives + true_threats
-        overall_fpr = (false_positives / evaluated_total) if evaluated_total > 0 else 0.0
+        overall_fpr = (
+            (false_positives / evaluated_total) if evaluated_total > 0 else 0.0
+        )
 
         return {
             "total_feedback_count": total_feedback,
             "feedback_distribution": by_type,
             "false_positive_rate": round(overall_fpr, 3),
             "camera_error_rates": camera_breakdown,
-            "hard_negatives_collected": len(list((HARD_NEGATIVES_DIR / "images").glob("*.jpg"))),
+            "hard_negatives_collected": len(
+                list((HARD_NEGATIVES_DIR / "images").glob("*.jpg"))
+            ),
         }
-

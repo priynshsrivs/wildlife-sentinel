@@ -7,6 +7,7 @@ Wildlife Sentinel combines real-time **computer vision (YOLOv8)** and **acoustic
 ---
 
 See [the interface refresh notes](docs/ui-refresh.md) for changed files, run commands and verification details.
+See [the reliability and security audit](docs/audit-fixes.md) for verified fixes, regression tests and backend restart notes.
 
 ## 1. System Architecture
 

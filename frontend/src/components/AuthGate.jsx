@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { ArrowRight, ShieldCheck, LogOut, Leaf } from "lucide-react";
 import forest from "../assets/dashboard-bg.webp";
 import { API_BASE, apiFetch, setToken } from "../api/client";
@@ -7,6 +7,16 @@ export default function AuthGate({ children }) {
   const [credential, setCredential] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [role, setRole] = useState("viewer");
+  useEffect(() => {
+    const expire = () => {
+      setAuthenticated(false);
+      setCredential("");
+      setError("Your session expired. Sign in again.");
+    };
+    window.addEventListener("sentinel-session-expired", expire);
+    return () => window.removeEventListener("sentinel-session-expired", expire);
+  }, []);
   async function login(event) {
     event.preventDefault();
     setError("");
@@ -16,13 +26,21 @@ export default function AuthGate({ children }) {
       const response = await apiFetch(`${API_BASE}/auth/me`);
       if (!response.ok)
         throw new Error("Invalid access token or server unavailable");
+      const identity = await response.json();
+      if (!["viewer", "operator", "admin"].includes(identity.role))
+        throw new Error(
+          "This token cannot open the browser workspace. Use a viewer, operator or admin token.",
+        );
+      setRole(identity.role);
       setCredential("");
       setAuthenticated(true);
     } catch (failure) {
       setToken("");
-      setError(failure instanceof TypeError
-        ? "Cannot reach the backend. Check that it is running and that this website's address is allowed."
-        : failure.message);
+      setError(
+        failure instanceof TypeError
+          ? "Cannot reach the backend. Check that it is running and that this website's address is allowed."
+          : failure.message,
+      );
     } finally {
       setBusy(false);
     }
@@ -40,7 +58,7 @@ export default function AuthGate({ children }) {
           <LogOut size={14} />
           Sign out
         </button>
-        {children}
+        {typeof children === "function" ? children(role) : children}
       </>
     );
   return (

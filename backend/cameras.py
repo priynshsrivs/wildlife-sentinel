@@ -59,9 +59,11 @@ class LatestFrameBuffer:
 
     async def get_latest(self) -> tuple[bytes, float] | None:
         async with self.lock:
-            if self.latest_data is None:
+            if self.latest_data is None or not self.unconsumed:
                 return None
             self.unconsumed = False
+            if time.monotonic() - self.latest_time > 10:
+                return None
             return self.latest_data, self.latest_time
 
 
@@ -202,7 +204,9 @@ async def camera_worker(camera: dict, store, process):
                                 await buffer.put(data)
                                 if camera_id in telemetry:
                                     telemetry[camera_id]["fps"] = buffer.measured_fps
-                                    telemetry[camera_id]["dropped_frames"] = buffer.dropped_frames
+                                    telemetry[camera_id]["dropped_frames"] = (
+                                        buffer.dropped_frames
+                                    )
                                 delay = 1
                             if not (await asyncio.to_thread(store.settings))[
                                 "remote_streams"
@@ -240,7 +244,11 @@ async def camera_worker(camera: dict, store, process):
                 frame_img = await asyncio.to_thread(decode_image, data)
                 res = await process(camera, frame_img)
                 latency_ms = (time.perf_counter() - t0) * 1000
-                risk = res.get("threat_level", "LOW") if isinstance(res, dict) else "LOW"
+                risk = (
+                    (res.get("alert") or {}).get("threat_level", "LOW")
+                    if isinstance(res, dict)
+                    else "LOW"
+                )
                 update_inference_telemetry(camera_id, latency_ms, risk)
             except Exception:
                 log.exception("camera_inference_error camera=%s", camera_id)

@@ -4,7 +4,5 @@ import AuthGate from "./components/AuthGate.jsx";
 import "./index.css";
 import "./App.css";
 createRoot(document.getElementById("root")).render(
-  <AuthGate>
-    <App />
-  </AuthGate>,
+  <AuthGate>{(role) => <App role={role} />}</AuthGate>,
 );

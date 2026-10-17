@@ -53,3 +53,5 @@ All three commands passed. The four existing tests cover credential scoping, uns
 Additional headless Edge checks used simulated API responses at desktop (1440 px) and phone widths (390 px and 320 px): sign-in rejection/success, all nine workspace tabs, image/video/audio ingestion requests, severity filters, resolution, explanation, ranger feedback, settings writes, WebSocket new/update events, mobile menu, shortcuts and sign-out. Desktop and mobile screenshots were inspected. Simulated responses were confined to the test browser; no authentication or API bypass was added to the application.
 
 These checks validate the UI and request contracts. A live camera, microphone, model server, ESP32 buzzer and Discord delivery were not available for an end-to-end field test. Verify those against your running services using the existing project setup.
+
+The subsequent [reliability/security audit](audit-fixes.md) adds real-backend browser integration tests and fixes feedback, evidence, permissions, session cleanup, camera buffering and proxy validation. Its verification notes supersede the initial four-test and simulated-API coverage above.

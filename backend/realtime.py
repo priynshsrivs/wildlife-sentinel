@@ -9,10 +9,16 @@ class ConnectionManager:
     def __init__(self):
         self.connections = set()
         self.pending = {}
+        self.connection_lock = asyncio.Lock()
 
     async def connect(self, websocket):
-        await websocket.accept()
-        self.connections.add(websocket)
+        async with self.connection_lock:
+            if len(self.connections) >= 100:
+                await websocket.close(code=1013)
+                return False
+            await websocket.accept()
+            self.connections.add(websocket)
+            return True
 
     def disconnect(self, websocket):
         self.connections.discard(websocket)

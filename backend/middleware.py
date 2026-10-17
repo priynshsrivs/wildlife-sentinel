@@ -16,9 +16,28 @@ class BodyLimitMiddleware(RequestBodyLimitMiddleware):
             and scope["method"] != "OPTIONS"
         ):
             header = dict(scope["headers"]).get(b"authorization", b"").decode("latin1")
-            role = token_role(header[7:] if header.startswith("Bearer ") else "")
+            scheme, _, credential = header.partition(" ")
+            role = token_role(credential.strip() if scheme.lower() == "bearer" else "")
             if role is None:
                 return await JSONResponse(
-                    {"detail": "Authentication required"}, status_code=401
+                    {"detail": "Authentication required"},
+                    status_code=401,
+                    headers={"WWW-Authenticate": "Bearer"},
+                )(scope, receive, send)
+            if (
+                role == "viewer"
+                and scope["method"] == "POST"
+                and (
+                    scope["path"].startswith("/api/detect")
+                    or scope["path"]
+                    in {
+                        "/api/audio/classify",
+                        "/api/audio/pipeline",
+                        "/api/edge/telemetry",
+                    }
+                )
+            ):
+                return await JSONResponse(
+                    {"detail": "Insufficient permissions"}, status_code=403
                 )(scope, receive, send)
         return await super().__call__(scope, receive, send)

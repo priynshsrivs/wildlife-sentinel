@@ -19,7 +19,12 @@ import StatusBadge from "./components/StatusBadge";
 import GlassButton from "./components/GlassButton";
 import GlobalStyles from "./components/GlobalStyles";
 import { DEFAULT_LOCATION, COLORS } from "./constants/theme";
-import { API_BASE, apiFetch, openAlertSocket } from "./api/client";
+import {
+  API_BASE,
+  apiFetch,
+  openAlertSocket,
+  responseError,
+} from "./api/client";
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 
@@ -81,7 +86,9 @@ ANIMATIONS
 GLOBAL CSS
 ========================================================= */
 
-export default function App() {
+export default function App({ role = "viewer" }) {
+  const canOperate = ["operator", "admin"].includes(role);
+  const canAdmin = role === "admin";
   const [viewMode, setViewMode] = useState("landing");
 
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -151,6 +158,17 @@ export default function App() {
 
   const webcamRef = useRef(null);
   const inferenceBusy = useRef(false);
+  const alertRevision = useRef(0);
+  const fetchRevision = useRef(0);
+  const toastTimer = useRef(null);
+  const [uploadError, setUploadError] = useState("");
+  useEffect(() => () => clearTimeout(toastTimer.current), []);
+  useEffect(
+    () => () => {
+      if (dashboardImage) URL.revokeObjectURL(dashboardImage);
+    },
+    [dashboardImage],
+  );
 
   const imageInputRef = useRef(null);
   const videoInputRef = useRef(null);
@@ -208,7 +226,8 @@ TOAST
       type,
     });
 
-    setTimeout(() => {
+    clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => {
       setToast(null);
     }, 3200);
   }, []);
@@ -219,6 +238,8 @@ FETCH ALL BACKEND DATA
 
   const fetchAllData = useCallback(
     async (silent = false) => {
+      const requestRevision = ++fetchRevision.current;
+      const startingAlerts = alertRevision.current;
       if (!silent) {
         setRefreshing(true);
       }
@@ -232,6 +253,7 @@ FETCH ALL BACKEND DATA
           apiFetch(`${API_BASE}/settings`),
         ]);
 
+        if (requestRevision !== fetchRevision.current) return;
         const [alertsRes, statsRes, analyticsRes, camerasRes, settingsRes] =
           responses;
 
@@ -240,7 +262,8 @@ FETCH ALL BACKEND DATA
         if (alertsRes.status === "fulfilled" && alertsRes.value.ok) {
           const data = await alertsRes.value.json();
 
-          setAlerts(data);
+          if (startingAlerts === alertRevision.current && Array.isArray(data))
+            setAlerts(data);
 
           successfulResponses += 1;
         }
@@ -324,7 +347,7 @@ FETCH ALL BACKEND DATA
           showToast("Backend connection failed", "danger");
         }
       } finally {
-        if (!silent) {
+        if (requestRevision === fetchRevision.current) {
           setRefreshing(false);
         }
       }
@@ -367,7 +390,10 @@ INITIAL DATA + WEBSOCKET
               socket.send(
                 JSON.stringify({ type: "ACK", event_id: message.event_id }),
               );
-            if (message.type === "CLEAR_ALERTS") setAlerts([]);
+            if (message.type === "CLEAR_ALERTS") {
+              alertRevision.current++;
+              setAlerts([]);
+            }
 
             if (["NEW_ALERT", "UPDATE_ALERT"].includes(message.type)) {
               const incomingAlert =
@@ -377,9 +403,17 @@ INITIAL DATA + WEBSOCKET
                 return;
               }
 
+              alertRevision.current++;
               setAlerts((prev) => mergeAlert(prev, incomingAlert));
-
-              showToast("New threat detected", "danger");
+              if (incomingAlert.resolved)
+                showToast("Incident resolved", "success");
+              else if (message.type === "NEW_ALERT")
+                showToast(
+                  "New event received",
+                  ["HIGH", "CRITICAL"].includes(incomingAlert.threat_level)
+                    ? "danger"
+                    : "info",
+                );
             }
           } catch (error) {
             console.error("[WS] Invalid message:", error);
@@ -534,10 +568,21 @@ FILE INGESTION
   const handleFileUpload = async (event, type = "image") => {
     const file = event.target.files?.[0];
 
-    if (!file) return;
+    if (!file || uploading || !canOperate) return;
+    const maxBytes = { image: 10, audio: 20, video: 100 }[type] * 1024 * 1024;
+    if (file.size === 0 || file.size > maxBytes) {
+      const message =
+        file.size === 0
+          ? "The selected file is empty."
+          : `${type} exceeds the ${maxBytes / 1024 / 1024} MB upload limit.`;
+      setUploadError(message);
+      showToast(message, "danger");
+      event.target.value = "";
+      return;
+    }
+    setUploadError("");
 
     if (type === "image") {
-      if (dashboardImage) URL.revokeObjectURL(dashboardImage);
       setDashboardImage(URL.createObjectURL(file));
 
       setUploadDetection(null);
@@ -576,7 +621,7 @@ FILE INGESTION
       });
 
       if (!response.ok) {
-        throw new Error("Upload failed");
+        throw new Error(await responseError(response, "Upload failed"));
       }
 
       if (type === "image") {
@@ -594,7 +639,8 @@ FILE INGESTION
     } catch (error) {
       console.error(error);
 
-      showToast(`Unable to process ${type}`, "danger");
+      setUploadError(error.message || `Unable to process ${type}`);
+      showToast(error.message || `Unable to process ${type}`, "danger");
     } finally {
       setUploading(false);
 
@@ -662,24 +708,36 @@ ALERT MANAGEMENT
 ===================================================== */
 
   const handleResolveAlert = async (id) => {
+    if (!canOperate) return false;
     try {
-      const response = await apiFetch(`${API_BASE}/alerts/${id}/resolve`, {
-        method: "POST",
-      });
+      const response = await apiFetch(
+        `${API_BASE}/alerts/${encodeURIComponent(id)}/resolve`,
+        {
+          method: "POST",
+        },
+      );
 
       if (!response.ok) {
         throw new Error("Could not resolve alert");
       }
 
+      alertRevision.current++;
+      setAlerts((prev) =>
+        prev.map((alert) =>
+          alert.id === id ? { ...alert, resolved: true } : alert,
+        ),
+      );
       await fetchAllData(true);
-
-      showToast("Threat intercepted and resolved", "success");
+      showToast("Incident resolved", "success");
+      return true;
     } catch {
       showToast("Server update failed; alert was not resolved.", "danger");
+      return false;
     }
   };
 
   const handleClearAlerts = async () => {
+    if (!canAdmin) return;
     const confirmed = window.confirm("Clear all security logs?");
 
     if (!confirmed) {
@@ -695,6 +753,7 @@ ALERT MANAGEMENT
         throw new Error(`Backend returned HTTP ${response.status}`);
       }
 
+      alertRevision.current++;
       setAlerts([]);
 
       await fetchAllData(true);
@@ -712,6 +771,7 @@ SETTINGS
 ===================================================== */
 
   const handleSettingsUpdate = async (updates) => {
+    if (!canAdmin) return false;
     try {
       const response = await apiFetch(`${API_BASE}/settings`, {
         method: "POST",
@@ -738,8 +798,8 @@ SETTINGS
       return true;
     } catch (error) {
       console.error("Settings update error:", error);
-
-      showToast("Could not save settings", "danger");
+      await fetchAllData(true);
+      showToast("Could not save settings; reloaded saved values", "danger");
 
       return false;
     }
@@ -1168,6 +1228,7 @@ MAIN DASHBOARD
               />
 
               <GlassButton
+                disabled={!canAdmin}
                 aria-label="Clear all alerts"
                 title="Clear all alerts"
                 danger
@@ -1301,6 +1362,8 @@ MAIN DASHBOARD
 
               {activeTab === "camera" && (
                 <CameraPage
+                  canOperate={canOperate}
+                  uploadError={uploadError}
                   analyzingUpload={analyzingUpload}
                   audioInputRef={audioInputRef}
                   backendOnline={backendOnline}
@@ -1326,6 +1389,7 @@ MAIN DASHBOARD
 
               {activeTab === "monitoring" && (
                 <MonitoringPage
+                  canAdmin={canAdmin}
                   availableStreams={availableStreams}
                   handleSettingsUpdate={handleSettingsUpdate}
                   monitoringTab={monitoringTab}
@@ -1340,6 +1404,7 @@ MAIN DASHBOARD
 
               {activeTab === "alert" && (
                 <AlertsPage
+                  canOperate={canOperate}
                   alertFilter={alertFilter}
                   filteredAlerts={filteredAlerts}
                   handleResolveAlert={handleResolveAlert}
@@ -1408,6 +1473,7 @@ MAIN DASHBOARD
 
               {activeTab === "settings" && (
                 <SettingsPage
+                  canAdmin={canAdmin}
                   confThreshold={confThreshold}
                   discordConfigured={discordConfigured}
                   geofenceRadius={geofenceRadius}
@@ -1601,9 +1667,10 @@ MAIN DASHBOARD
                     width: "100%",
                     marginTop: 22,
                   }}
-                  onClick={() => {
-                    handleResolveAlert(selectedAlert.id);
-                    setSelectedAlert(null);
+                  disabled={!canOperate}
+                  onClick={async () => {
+                    if (await handleResolveAlert(selectedAlert.id))
+                      setSelectedAlert(null);
                   }}
                   icon={<CheckCircle2 size={15} />}
                 >

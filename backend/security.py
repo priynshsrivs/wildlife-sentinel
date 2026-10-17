@@ -3,6 +3,7 @@
 import hmac
 import time
 import secrets
+import threading
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sentinel_config import API_TOKENS, SERVICE_TOKEN
@@ -10,15 +11,25 @@ from sentinel_config import API_TOKENS, SERVICE_TOKEN
 bearer = HTTPBearer(auto_error=False)
 ROLES = {"viewer": 0, "operator": 1, "admin": 2}
 tickets = {}
+ticket_lock = threading.Lock()
 
 
 def token_role(token):
-    if not token:
+    if (
+        not isinstance(token, str)
+        or not token
+        or not token.isascii()
+        or len(token) > 4096
+    ):
         return None
     for role, expected in API_TOKENS.items():
-        if expected and hmac.compare_digest(token, expected):
+        if expected and expected.isascii() and hmac.compare_digest(token, expected):
             return role
-    if SERVICE_TOKEN and hmac.compare_digest(token, SERVICE_TOKEN):
+    if (
+        SERVICE_TOKEN
+        and SERVICE_TOKEN.isascii()
+        and hmac.compare_digest(token, SERVICE_TOKEN)
+    ):
         return "service"
     return None
 
@@ -47,16 +58,20 @@ def rate_key(request: Request):
 
 
 def issue_ticket():
-    now = time.monotonic()
-    for key in list(tickets):
-        if tickets[key] < now:
-            tickets.pop(key, None)
-    if len(tickets) >= 1000:
-        raise HTTPException(429, "Too many pending connections")
-    ticket = secrets.token_urlsafe(32)
-    tickets[ticket] = now + 30
-    return ticket
+    with ticket_lock:
+        now = time.monotonic()
+        for key in list(tickets):
+            if tickets[key] < now:
+                tickets.pop(key, None)
+        if len(tickets) >= 1000:
+            raise HTTPException(429, "Too many pending connections")
+        ticket = secrets.token_urlsafe(32)
+        tickets[ticket] = now + 30
+        return ticket
 
 
 def consume_ticket(ticket):
-    return tickets.pop(ticket, 0) > time.monotonic()
+    if not isinstance(ticket, str):
+        return False
+    with ticket_lock:
+        return tickets.pop(ticket, 0) > time.monotonic()

@@ -1,132 +1,124 @@
-import { useState } from "react";
-import SeverityBadge from "../components/SeverityBadge";
-import SectionHeader from "../components/SectionHeader";
+import { createPortal } from "react-dom";
+import useDialogFocus from "../components/useDialogFocus";
+import { useRef, useState, useEffect } from "react";
 import {
   TriangleAlert,
-  ShieldCheck,
   CheckCircle2,
   Brain,
-  ThumbsUp,
-  ThumbsDown,
-  AlertOctagon,
   X,
+  ShieldCheck,
 } from "lucide-react";
+import SectionHeader from "../components/SectionHeader";
+import SeverityBadge from "../components/SeverityBadge";
 import GlassButton from "../components/GlassButton";
-import { COLORS } from "../constants/theme";
-import { motion, AnimatePresence } from "framer-motion";
-import { API_BASE, apiFetch } from "../api/client";
+import { API_BASE, apiFetch, responseError } from "../api/client";
 
+const feedbackOptions = [
+  ["TRUE_THREAT", "Threat"],
+  ["FALSE_POSITIVE", "False alarm"],
+  ["AUTHORIZED_PERSON", "Authorized person"],
+  ["AUTHORIZED_VEHICLE", "Authorized vehicle"],
+  ["UNCERTAIN", "Uncertain"],
+];
 export default function AlertsPage({
   alertFilter,
   filteredAlerts,
   handleResolveAlert,
   setAlertFilter,
+  canOperate = false,
 }) {
   const [selectedXai, setSelectedXai] = useState(null);
-  const [xaiLoading, setXaiLoading] = useState(false);
   const [feedbackState, setFeedbackState] = useState({});
-
+  const [resolving, setResolving] = useState({});
+  const explanationRequest = useRef(null);
+  useEffect(() => () => explanationRequest.current?.abort(), []);
+  const closeExplanation = () => {
+    explanationRequest.current?.abort();
+    setSelectedXai(null);
+  };
+  const dialogRef = useDialogFocus(Boolean(selectedXai), closeExplanation);
   const handleExplain = async (alert) => {
-    setXaiLoading(true);
-    setSelectedXai({ alert, data: null });
+    explanationRequest.current?.abort();
+    const controller = new AbortController();
+    explanationRequest.current = controller;
+    setSelectedXai({ alert, loading: true });
     try {
-      const res = await apiFetch(`${API_BASE}/alerts/${alert.id}/explain`);
-      if (res.ok) {
-        const data = await res.json();
-        setSelectedXai({ alert, data });
-      } else {
+      const response = await apiFetch(
+        `${API_BASE}/alerts/${encodeURIComponent(alert.id)}/explain`,
+        { signal: controller.signal },
+      );
+      if (!response.ok)
+        throw new Error(
+          await responseError(response, "Explanation unavailable"),
+        );
+      const data = await response.json();
+      if (!controller.signal.aborted)
+        setSelectedXai({ alert, data, loading: false });
+    } catch (error) {
+      if (!controller.signal.aborted)
         setSelectedXai({
           alert,
-          data: {
-            rationale: `Alert triggered by ${alert.threat_level || "MONITORED"} event at camera node ${alert.camera_id || "UNKNOWN"}.`,
-            sensor_modalities: ["vision"],
-            uncertainty_score: 0.12,
-            camera_health_score: 0.95,
-            evidence_checklist: [
-              "Target persistence across multiple frames",
-              "Proximity to restricted reserve boundary",
-              "Confidence exceeds operational escalation threshold",
-            ],
-            model_cascade: "Stage 1 (Nano) -> Escalation verified",
-            threshold_audit: { confidence: 0.75, min_threshold: 0.45 },
-          },
+          error: error.message || "Explanation unavailable",
+          loading: false,
         });
-      }
-    } catch {
-      setSelectedXai({
-        alert,
-        data: {
-          rationale: `Standard escalation: threat score verified by temporal accumulator.`,
-          sensor_modalities: ["vision"],
-          uncertainty_score: 0.15,
-          camera_health_score: 0.92,
-          evidence_checklist: [
-            "Visual target detected",
-            "Spatial geofence breach",
-          ],
-          model_cascade: "Nano -> Verified",
-          threshold_audit: { confidence: 0.8, min_threshold: 0.45 },
-        },
-      });
-    } finally {
-      setXaiLoading(false);
     }
   };
-
-  const handleFeedback = async (alertId, classification) => {
+  const handleFeedback = async (alertId, feedbackType) => {
+    if (!canOperate || feedbackState[alertId]?.status === "submitting") return;
+    setFeedbackState((prev) => ({
+      ...prev,
+      [alertId]: { status: "submitting" },
+    }));
     try {
+      const response = await apiFetch(
+        `${API_BASE}/alerts/${encodeURIComponent(alertId)}/feedback`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            feedback_type: feedbackType,
+            notes: `Ranger field confirmation: ${feedbackType}`,
+          }),
+        },
+      );
+      if (!response.ok)
+        throw new Error(
+          await responseError(response, "Feedback was not saved"),
+        );
+      const result = await response.json();
       setFeedbackState((prev) => ({
         ...prev,
-        [alertId]: { classification, status: "submitting" },
+        [alertId]: {
+          status: "saved",
+          feedbackType,
+          exported: result.saved_to_hard_negatives,
+        },
       }));
-      const res = await apiFetch(`${API_BASE}/alerts/${alertId}/feedback`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          classification,
-          ranger_id: "ranger_alpha_1",
-          notes: `Ranger field confirmation: ${classification}`,
-        }),
-      });
-      if (res.ok) {
-        setFeedbackState((prev) => ({
-          ...prev,
-          [alertId]: { classification, status: "saved" },
-        }));
-      } else {
-        setFeedbackState((prev) => ({
-          ...prev,
-          [alertId]: { classification, status: "error" },
-        }));
-      }
-    } catch {
+    } catch (error) {
       setFeedbackState((prev) => ({
         ...prev,
-        [alertId]: { classification, status: "error" },
+        [alertId]: { status: "error", error: error.message },
       }));
     }
   };
-
+  const resolve = async (id) => {
+    setResolving((prev) => ({ ...prev, [id]: true }));
+    try {
+      await handleResolveAlert(id);
+    } finally {
+      setResolving((prev) => ({ ...prev, [id]: false }));
+    }
+  };
   return (
     <div className="glass-panel alerts-panel" style={{ padding: 23 }}>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: 15,
-          marginBottom: 20,
-          flexWrap: "wrap",
-        }}
-      >
+      <div className="panel-heading">
         <SectionHeader
           title="Incident Security Log"
-          subtitle="Threat events requiring field response & ranger audit."
-          icon={<TriangleAlert size={18} color="#ef4444" />}
+          subtitle="Threat events requiring field response and ranger audit."
+          icon={<TriangleAlert size={18} />}
         />
-
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {["ALL", "CRITICAL", "HIGH", "MONITORED"].map((filter) => (
+        <div className="alert-filters">
+          {["ALL", "CRITICAL", "HIGH", "MEDIUM", "MONITORED"].map((filter) => (
             <GlassButton
               key={filter}
               active={alertFilter === filter}
@@ -137,19 +129,14 @@ export default function AlertsPage({
           ))}
         </div>
       </div>
-
+      {!canOperate && (
+        <p className="read-only-note">
+          Viewer access: you can inspect incidents. An operator or administrator
+          can resolve them and submit feedback.
+        </p>
+      )}
       {filteredAlerts.length === 0 ? (
-        <div
-          style={{
-            minHeight: 300,
-            display: "grid",
-            placeItems: "center",
-            border: "1px dashed rgba(255,255,255,.08)",
-            borderRadius: 12,
-            color: COLORS.dim,
-          }}
-          className="empty-state"
-        >
+        <div className="empty-state">
           <ShieldCheck size={30} />
           <h3>No incidents in this view</h3>
           <p>
@@ -158,503 +145,208 @@ export default function AlertsPage({
           </p>
         </div>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {filteredAlerts.map((alert) => {
-            const critical = alert.threat_level === "CRITICAL";
-
-            return (
-              <motion.div
-                key={alert.id}
-                initial={{ opacity: 0, x: -10 }}
-                animate={{ opacity: 1, x: 0 }}
-                className={`incident-row ${alert.resolved ? "incident-resolved" : critical ? "incident-critical" : alert.threat_level === "HIGH" ? "incident-high" : "incident-monitored"}`}
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  gap: 20,
-                  padding: "16px 18px",
-                  borderRadius: 12,
-                  background: critical
-                    ? "rgba(239,68,68,.045)"
-                    : "rgba(255,255,255,.025)",
-                  border: `1px solid ${
-                    critical ? "rgba(239,68,68,.2)" : "rgba(255,255,255,.07)"
-                  }`,
-                }}
-              >
-                <div style={{ minWidth: 0 }}>
-                  <div
-                    className="incident-heading"
-                    style={{ display: "flex", alignItems: "center", gap: 10 }}
-                  >
-                    <strong style={{ fontSize: 13 }}>
-                      {alert.camera_id || alert.cam || "UNKNOWN NODE"}
-                    </strong>
-
-                    <SeverityBadge level={alert.threat_level || alert.threat} />
-                  </div>
-
-                  <div
-                    style={{ color: COLORS.dim, fontSize: 10, marginTop: 5 }}
-                  >
-                    {alert.timestamp
-                      ? new Date(alert.timestamp).toLocaleString()
-                      : "Recent event"}
-                  </div>
-
-                  <div
-                    style={{
-                      display: "flex",
-                      gap: 7,
-                      flexWrap: "wrap",
-                      marginTop: 9,
-                    }}
-                  >
-                    {(alert.detections || []).map((detection, i) => (
-                      <span
-                        key={i}
-                        style={{
-                          padding: "4px 7px",
-                          borderRadius: 5,
-                          background: "rgba(255,255,255,.05)",
-                          fontSize: 10,
-                        }}
-                      >
-                        {detection.label}{" "}
-                        <span style={{ color: "#4ade80", fontWeight: 700 }}>
-                          {Math.round((detection.confidence || 0) * 100)}%
-                        </span>
-                      </span>
-                    ))}
-                  </div>
+        <div className="incident-list">
+          {filteredAlerts.map((alert) => (
+            <article
+              key={alert.id}
+              className={`incident-row incident-${alert.resolved ? "resolved" : alert.threat_level === "CRITICAL" ? "critical" : alert.threat_level === "HIGH" ? "high" : "monitored"}`}
+            >
+              <div>
+                <div className="incident-heading">
+                  <strong>{alert.camera_id || "Unknown node"}</strong>
+                  <SeverityBadge level={alert.threat_level} />
                 </div>
-
-                <div
-                  className="incident-actions"
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "flex-end",
-                    gap: 8,
-                    flexShrink: 0,
-                  }}
-                >
-                  <div
-                    style={{ display: "flex", alignItems: "center", gap: 6 }}
-                  >
-                    <GlassButton
-                      onClick={() => handleExplain(alert)}
-                      icon={<Brain size={14} color="#38bdf8" />}
-                    >
-                      Explain Decision
-                    </GlassButton>
-
-                    {!alert.resolved ? (
-                      <GlassButton
-                        success
-                        onClick={() => handleResolveAlert(alert.id)}
-                        icon={<CheckCircle2 size={14} />}
-                      >
-                        Resolve
-                      </GlassButton>
-                    ) : (
-                      <span
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 6,
-                          color: COLORS.dim,
-                          fontSize: 11,
-                        }}
-                      >
-                        <CheckCircle2 size={14} />
-                        Resolved
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Ranger HITL Feedback Actions */}
-                  <div
-                    style={{ display: "flex", alignItems: "center", gap: 4 }}
-                  >
-                    <span
-                      style={{
-                        fontSize: 10,
-                        color: COLORS.dim,
-                        marginRight: 2,
-                      }}
-                    >
-                      Ranger Audit:
+                <small className="incident-time">
+                  {alert.timestamp
+                    ? new Date(alert.timestamp).toLocaleString()
+                    : "Time unavailable"}
+                </small>
+                <div className="detection-chips">
+                  {(alert.detections || []).map((d, index) => (
+                    <span key={index}>
+                      {d.label}{" "}
+                      <strong>
+                        {Number.isFinite(d.confidence)
+                          ? `${Math.round(d.confidence * 100)}%`
+                          : "Confidence unavailable"}
+                      </strong>
                     </span>
-                    {feedbackState[alert.id]?.status === "saved" ? (
-                      <span
-                        style={{
-                          fontSize: 10,
-                          padding: "2px 8px",
-                          borderRadius: 4,
-                          background:
-                            feedbackState[alert.id].classification ===
-                            "TRUE_THREAT"
-                              ? "rgba(239,68,68,0.15)"
-                              : "rgba(74,222,128,0.15)",
-                          color:
-                            feedbackState[alert.id].classification ===
-                            "TRUE_THREAT"
-                              ? "#ef4444"
-                              : "#4ade80",
-                          fontWeight: 600,
-                        }}
-                      >
-                        ✓{" "}
-                        {feedbackState[alert.id].classification.replace(
-                          "_",
-                          " ",
-                        )}
-                      </span>
-                    ) : (
-                      <>
-                        <button
-                          title="Confirm as True Threat"
-                          onClick={() =>
-                            handleFeedback(alert.id, "TRUE_THREAT")
-                          }
-                          style={{
-                            background: "rgba(239,68,68,0.1)",
-                            border: "1px solid rgba(239,68,68,0.3)",
-                            color: "#f87171",
-                            padding: "3px 7px",
-                            borderRadius: 4,
-                            fontSize: 10,
-                            cursor: "pointer",
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 3,
-                          }}
-                        >
-                          <ThumbsUp size={11} /> Threat
-                        </button>
-                        <button
-                          title="Mark as False Positive"
-                          onClick={() =>
-                            handleFeedback(alert.id, "FALSE_POSITIVE")
-                          }
-                          style={{
-                            background: "rgba(245,158,11,0.1)",
-                            border: "1px solid rgba(245,158,11,0.3)",
-                            color: "#fbbf24",
-                            padding: "3px 7px",
-                            borderRadius: 4,
-                            fontSize: 10,
-                            cursor: "pointer",
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 3,
-                          }}
-                        >
-                          <ThumbsDown size={11} /> False Alarm
-                        </button>
-                        <button
-                          title="Save to Hard-Negative Pipeline for Retraining"
-                          onClick={() =>
-                            handleFeedback(alert.id, "HARD_NEGATIVE")
-                          }
-                          style={{
-                            background: "rgba(168,85,247,0.1)",
-                            border: "1px solid rgba(168,85,247,0.3)",
-                            color: "#c084fc",
-                            padding: "3px 7px",
-                            borderRadius: 4,
-                            fontSize: 10,
-                            cursor: "pointer",
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 3,
-                          }}
-                        >
-                          <AlertOctagon size={11} /> Hard Negative
-                        </button>
-                      </>
-                    )}
-                  </div>
+                  ))}
                 </div>
-              </motion.div>
-            );
-          })}
+              </div>
+              <div className="incident-actions">
+                <div className="incident-buttons">
+                  <GlassButton
+                    onClick={() => handleExplain(alert)}
+                    icon={<Brain size={14} />}
+                  >
+                    Explain Decision
+                  </GlassButton>
+                  {alert.resolved ? (
+                    <SeverityBadge resolved />
+                  ) : (
+                    <GlassButton
+                      success
+                      disabled={!canOperate || resolving[alert.id]}
+                      onClick={() => resolve(alert.id)}
+                      icon={<CheckCircle2 size={14} />}
+                    >
+                      {resolving[alert.id] ? "Resolving…" : "Resolve"}
+                    </GlassButton>
+                  )}
+                </div>
+                <div className="feedback-actions">
+                  <span>Ranger audit:</span>
+                  {feedbackState[alert.id]?.status === "saved" ? (
+                    <span role="status">
+                      Saved:{" "}
+                      {feedbackState[alert.id].feedbackType.replaceAll(
+                        "_",
+                        " ",
+                      )}
+                      {feedbackState[alert.id].exported
+                        ? " · Added to hard negatives"
+                        : ""}
+                    </span>
+                  ) : (
+                    feedbackOptions.map(([type, label]) => (
+                      <GlassButton
+                        key={type}
+                        disabled={
+                          !canOperate ||
+                          feedbackState[alert.id]?.status === "submitting"
+                        }
+                        onClick={() => handleFeedback(alert.id, type)}
+                      >
+                        {label}
+                      </GlassButton>
+                    ))
+                  )}
+                </div>
+                {feedbackState[alert.id]?.status === "error" && (
+                  <p className="inline-error" role="alert">
+                    {feedbackState[alert.id].error}. You can retry.
+                  </p>
+                )}
+              </div>
+            </article>
+          ))}
         </div>
       )}
-
-      {/* Explainable AI Decision Audit Modal */}
-      <AnimatePresence>
-        {selectedXai && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            style={{
-              position: "fixed",
-              inset: 0,
-              background: "rgba(0,0,0,0.75)",
-              backdropFilter: "blur(6px)",
-              zIndex: 1000,
-              display: "grid",
-              placeItems: "center",
-              padding: 20,
-            }}
-            onClick={() => setSelectedXai(null)}
-          >
-            <motion.div
-              initial={{ scale: 0.94, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.94, opacity: 0 }}
-              onClick={(e) => e.stopPropagation()}
-              style={{
-                background: "#04130d",
-                border: "1px solid rgba(74,222,128,0.25)",
-                borderRadius: 14,
-                width: "100%",
-                maxWidth: 620,
-                padding: 24,
-                color: COLORS.text,
-                maxHeight: "90vh",
-                overflowY: "auto",
-                boxShadow: "0 20px 40px rgba(0,0,0,0.6)",
+      {selectedXai &&
+        createPortal(
+          <div className="modal-backdrop" onClick={closeExplanation}>
+            <section
+              ref={dialogRef}
+              tabIndex={-1}
+              className="glass-panel audit-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="audit-title"
+              onClick={(event) => event.stopPropagation()}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") closeExplanation();
               }}
             >
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  borderBottom: "1px solid rgba(255,255,255,0.08)",
-                  paddingBottom: 14,
-                  marginBottom: 16,
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <Brain size={22} color="#38bdf8" />
-                  <div>
-                    <div style={{ fontWeight: 800, fontSize: 16 }}>
-                      Explainable AI (XAI) Decision Audit
-                    </div>
-                    <div style={{ fontSize: 11, color: COLORS.dim }}>
-                      Incident ID #{selectedXai.alert?.id} • Node:{" "}
-                      {selectedXai.alert?.camera_id || "UNKNOWN"}
-                    </div>
-                  </div>
-                </div>
+              <div className="panel-heading">
+                <SectionHeader
+                  title="Incident evidence audit"
+                  subtitle={selectedXai.alert.camera_id}
+                  icon={<Brain size={20} />}
+                />
                 <button
-                  onClick={() => setSelectedXai(null)}
-                  style={{
-                    background: "transparent",
-                    border: "none",
-                    color: COLORS.dim,
-                    cursor: "pointer",
-                    padding: 4,
-                  }}
+                  className="dialog-close"
+                  onClick={closeExplanation}
+                  aria-label="Close decision explanation"
                 >
-                  <X size={18} aria-label="Close decision explanation" />
+                  <X size={18} />
                 </button>
               </div>
-
-              {xaiLoading ? (
-                <div
-                  style={{
-                    padding: 40,
-                    textAlign: "center",
-                    color: COLORS.dim,
-                  }}
-                >
-                  Generating Explainable Audit Trace...
-                </div>
+              <h3 id="audit-title">Recorded evidence</h3>
+              {selectedXai.loading ? (
+                <p role="status">Loading the backend audit…</p>
+              ) : selectedXai.error ? (
+                <p className="inline-error" role="alert">
+                  {selectedXai.error}. No explanation could be verified.
+                </p>
               ) : (
-                <div
-                  style={{ display: "flex", flexDirection: "column", gap: 16 }}
-                >
-                  {/* Rationale Card */}
-                  <div
-                    style={{
-                      background: "rgba(56,189,248,0.06)",
-                      border: "1px solid rgba(56,189,248,0.2)",
-                      borderRadius: 10,
-                      padding: 14,
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontSize: 11,
-                        fontWeight: 700,
-                        color: "#38bdf8",
-                        marginBottom: 4,
-                      }}
-                    >
-                      DECISION RATIONALE
+                <div className="audit-content">
+                  <p>
+                    {selectedXai.data.summary ||
+                      "Summary not provided by the server."}
+                  </p>
+                  <div className="audit-facts">
+                    <div>
+                      <small>Modality</small>
+                      <strong>
+                        {selectedXai.data.modality || "Unavailable"}
+                      </strong>
                     </div>
-                    <div style={{ fontSize: 13, lineHeight: 1.5 }}>
-                      {selectedXai.data?.rationale ||
-                        "Alert escalated based on multi-frame human persistence in restricted core boundary."}
+                    <div>
+                      <small>Recorded frames</small>
+                      <strong>
+                        {selectedXai.data.frame_count ?? "Unavailable"}
+                      </strong>
                     </div>
-                  </div>
-
-                  {/* Telemetry Metrics */}
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "repeat(3, 1fr)",
-                      gap: 10,
-                    }}
-                  >
-                    <div
-                      style={{
-                        background: "rgba(255,255,255,0.03)",
-                        border: "1px solid rgba(255,255,255,0.06)",
-                        borderRadius: 8,
-                        padding: 12,
-                      }}
-                    >
-                      <div style={{ fontSize: 10, color: COLORS.dim }}>
-                        Uncertainty Score (𝒰)
-                      </div>
-                      <div
-                        style={{
-                          fontSize: 18,
-                          fontWeight: 800,
-                          color:
-                            (selectedXai.data?.uncertainty_score ?? 0) > 0.35
-                              ? "#f59e0b"
-                              : "#4ade80",
-                          marginTop: 4,
-                        }}
-                      >
-                        {Number(
-                          selectedXai.data?.uncertainty_score ?? 0.12,
-                        ).toFixed(2)}
-                      </div>
-                    </div>
-                    <div
-                      style={{
-                        background: "rgba(255,255,255,0.03)",
-                        border: "1px solid rgba(255,255,255,0.06)",
-                        borderRadius: 8,
-                        padding: 12,
-                      }}
-                    >
-                      <div style={{ fontSize: 10, color: COLORS.dim }}>
-                        Sensor Health (ℋ)
-                      </div>
-                      <div
-                        style={{
-                          fontSize: 18,
-                          fontWeight: 800,
-                          color: "#4ade80",
-                          marginTop: 4,
-                        }}
-                      >
-                        {Math.round(
-                          (selectedXai.data?.camera_health_score ?? 0.95) * 100,
-                        )}
-                        %
-                      </div>
-                    </div>
-                    <div
-                      style={{
-                        background: "rgba(255,255,255,0.03)",
-                        border: "1px solid rgba(255,255,255,0.06)",
-                        borderRadius: 8,
-                        padding: 12,
-                      }}
-                    >
-                      <div style={{ fontSize: 10, color: COLORS.dim }}>
-                        Modalities Triggered
-                      </div>
-                      <div
-                        style={{
-                          fontSize: 13,
-                          fontWeight: 700,
-                          color: "#38bdf8",
-                          marginTop: 6,
-                        }}
-                      >
-                        {(selectedXai.data?.sensor_modalities || ["vision"])
-                          .join(", ")
-                          .toUpperCase()}
-                      </div>
+                    <div>
+                      <small>Peak confidence</small>
+                      <strong>
+                        {Number.isFinite(selectedXai.data.confidence)
+                          ? `${Math.round(selectedXai.data.confidence * 100)}%`
+                          : "Unavailable"}
+                      </strong>
                     </div>
                   </div>
-
-                  {/* Cascade Trace */}
-                  <div
-                    style={{
-                      background: "rgba(255,255,255,0.02)",
-                      border: "1px solid rgba(255,255,255,0.06)",
-                      borderRadius: 10,
-                      padding: 14,
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontSize: 11,
-                        fontWeight: 700,
-                        color: "#4ade80",
-                        marginBottom: 6,
-                      }}
-                    >
-                      INFERENCE CASCADE PATH
-                    </div>
-                    <div style={{ fontSize: 12, color: "#cbd5e1" }}>
-                      {selectedXai.data?.model_cascade ||
-                        "Stage 1 (YOLO11n Nano @ 5 FPS) → Uncertainty Trigger → Stage 2 (YOLO11s Verification) → Confirmed Threat"}
-                    </div>
-                  </div>
-
-                  {/* Evidence Checklist */}
-                  <div
-                    style={{
-                      background: "rgba(255,255,255,0.02)",
-                      border: "1px solid rgba(255,255,255,0.06)",
-                      borderRadius: 10,
-                      padding: 14,
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontSize: 11,
-                        fontWeight: 700,
-                        color: "#a78bfa",
-                        marginBottom: 8,
-                      }}
-                    >
-                      EVIDENCE CHECKLIST
-                    </div>
-                    <ul
-                      style={{
-                        margin: 0,
-                        paddingLeft: 18,
-                        fontSize: 12,
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 6,
-                      }}
-                    >
-                      {(
-                        selectedXai.data?.evidence_checklist || [
-                          "Human target tracked across > 3 continuous frames",
-                          "Spatial position within sanctuary restricted boundary",
-                          "Absence of authorized patrol transponder",
-                        ]
-                      ).map((item, idx) => (
-                        <li key={idx} style={{ color: "#e2e8f0" }}>
-                          {item}
+                  <h4>Evidence checklist</h4>
+                  <ul>
+                    {(selectedXai.data.evidence_checklist || []).map(
+                      (item, i) => (
+                        <li key={i}>
+                          {typeof item === "string"
+                            ? item
+                            : `${item.modality || "Sensor"}: ${item.finding || "Finding unavailable"}`}
                         </li>
-                      ))}
-                    </ul>
-                  </div>
+                      ),
+                    )}
+                  </ul>
+                  <h4>Recorded model information</h4>
+                  <pre>
+                    {JSON.stringify(
+                      selectedXai.data.model_cascade_trace || {},
+                      null,
+                      2,
+                    )}
+                  </pre>
+                  <h4>Threshold audit</h4>
+                  <pre>
+                    {JSON.stringify(
+                      selectedXai.data.threshold_audit || {},
+                      null,
+                      2,
+                    )}
+                  </pre>
+                  <p className="read-only-note">
+                    Current settings describe the configuration now. Missing
+                    historical values are unavailable, not inferred.
+                  </p>
+                  <h4>Dispatch records</h4>
+                  <ul>
+                    {(selectedXai.data.dispatch || []).map((item, i) => (
+                      <li key={i}>
+                        {item.severity}: {item.status}
+                      </li>
+                    ))}
+                  </ul>
+                  <p>
+                    {selectedXai.data.recommended_action ||
+                      "Verify field conditions before responding."}
+                  </p>
                 </div>
               )}
-            </motion.div>
-          </motion.div>
+            </section>
+          </div>,
+          document.body,
         )}
-      </AnimatePresence>
     </div>
   );
 }
