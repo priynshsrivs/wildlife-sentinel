@@ -8,6 +8,8 @@ from scripts import bootstrap, launch, startup
 
 
 def test_service_ports_reject_collisions_and_invalid_values():
+    assert startup.DEFAULT_FRONTEND_PORT == 5174
+    assert startup.service_ports()["frontend"] == 5174
     assert startup.service_ports(5174, True)["camera"] == 8080
     for port in (0, 65536, 8000, 5001):
         with pytest.raises(RuntimeError):

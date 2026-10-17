@@ -3,5 +3,5 @@ import { defineConfig } from "vite";
 import { localProxy, localProxyGuard } from "./dev-proxy.js";
 export default defineConfig({
   plugins: [localProxyGuard(), react()],
-  server: { host: "127.0.0.1", proxy: localProxy() },
+  server: { host: "127.0.0.1", port: 5174, proxy: localProxy() },
 });

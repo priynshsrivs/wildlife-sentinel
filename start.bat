@@ -8,19 +8,19 @@ echo Checkout: %~dp0
 echo.
 
 if exist ".venv\Scripts\python.exe" (
-  ".venv\Scripts\python.exe" scripts\bootstrap.py %*
+  ".venv\Scripts\python.exe" scripts\bootstrap.py --frontend-port 5174 %*
   goto finished
 )
 
 where py >nul 2>nul
 if not errorlevel 1 (
-  py -3.13 scripts\bootstrap.py %*
+  py -3.13 scripts\bootstrap.py --frontend-port 5174 %*
   goto finished
 )
 
 where python >nul 2>nul
 if not errorlevel 1 (
-  python scripts\bootstrap.py %*
+  python scripts\bootstrap.py --frontend-port 5174 %*
   goto finished
 )
 

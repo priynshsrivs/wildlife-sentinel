@@ -11,7 +11,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from scripts.startup import check_ports, service_ports
+from scripts.startup import DEFAULT_FRONTEND_PORT, check_ports, service_ports
 
 FRONTEND = ROOT / "frontend"
 REQUIREMENTS = ROOT / "backend" / "requirements.txt"
@@ -95,7 +95,10 @@ def main(argv=None):
         "--no-browser", action="store_true", help="Keep the browser closed"
     )
     parser.add_argument(
-        "--frontend-port", type=int, default=5173, help="Frontend port (default: 5173)"
+        "--frontend-port",
+        type=int,
+        default=DEFAULT_FRONTEND_PORT,
+        help="Frontend port (default: 5174)",
     )
     args = parser.parse_args(argv)
     ports = service_ports(args.frontend_port, args.camera)

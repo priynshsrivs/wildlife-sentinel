@@ -11,7 +11,7 @@ import webbrowser
 
 import httpx
 from sentinel_config import ROOT, DATA_DIR, API_TOKENS, SERVICE_TOKEN
-from scripts.startup import check_ports, service_ports
+from scripts.startup import DEFAULT_FRONTEND_PORT, check_ports, service_ports
 
 
 def wait_health(url, process, timeout=120, json_response=True):
@@ -63,7 +63,7 @@ def main(argv=None):
     parser.add_argument("--camera", action="store_true")
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--check", action="store_true")
-    parser.add_argument("--frontend-port", type=int, default=5173)
+    parser.add_argument("--frontend-port", type=int, default=DEFAULT_FRONTEND_PORT)
     args = parser.parse_args(argv)
     node = shutil.which("node")
     if not node or not shutil.which("npm"):

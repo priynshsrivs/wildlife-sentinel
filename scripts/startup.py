@@ -3,7 +3,10 @@
 import socket
 
 
-def service_ports(frontend_port=5173, camera=False):
+DEFAULT_FRONTEND_PORT = 5174
+
+
+def service_ports(frontend_port=DEFAULT_FRONTEND_PORT, camera=False):
     if not 1 <= frontend_port <= 65535:
         raise RuntimeError("Frontend port must be between 1 and 65535")
     ports = {"backend": 8000, "audio": 5001, "frontend": frontend_port}

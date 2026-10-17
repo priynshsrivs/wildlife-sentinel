@@ -27,14 +27,14 @@ Microphone (Audio WAV)     ──→  Audio API    (:5001)   ──→  Audio Re
                                                          Backend WebSocket Broadcast (:8000/ws/alerts)
                                                          + Discord Dispatch Outbox (Async Worker)
                                                                                   ↓
-                                                               React Frontend Dashboard (:5173)
+                                                               React Frontend Dashboard (:5174)
 ```
 
 ### Services & Port Assignments
 
 - **Backend API**: `http://127.0.0.1:8000` (FastAPI, YOLOv8 vision, incident persistence, rate limits, WebSocket)
 - **Audio AI Service**: `http://127.0.0.1:5001` (FastAPI, YAMNet acoustic classifier, paired fusion runner)
-- **Frontend Dashboard**: `http://127.0.0.1:5173` (Vite, React, Leaflet maps, live alert feeds, telemetry stats)
+- **Frontend Dashboard**: `http://127.0.0.1:5174` (Vite, React, Leaflet maps, live alert feeds, telemetry stats)
 - **Camera MJPEG Server**: `http://127.0.0.1:8080` (Waitress, authenticated hardware camera stream)
 
 ---
@@ -197,12 +197,12 @@ Double-click `start.bat` or run from PowerShell:
 ```powershell
 .\start.bat --setup                 # Install/refresh dependencies without starting services
 .\start.bat --check                 # Check configuration, dependencies and ports without installing
-.\start.bat --frontend-port 5174     # Use another frontend port through the guarded local proxy
+.\start.bat --frontend-port 5175     # Use another frontend port through the guarded local proxy
 .\start.bat --camera                # Also start the local camera streamer
 .\start.bat --no-browser            # Start services without opening a browser
 ```
 
-Default service ports are backend 8000, audio 5001 and frontend 5173; `--camera` also uses 8080. Ctrl+C stops the services started by this launcher. Logs append under the configured `DATA_DIR/logs` directory. Missing model files may leave inference degraded; startup reports that status instead of claiming the models are ready. Role tokens stay in `.env` and are not printed by the launcher.
+Default service ports are backend 8000, audio 5001 and frontend 5174; `--camera` also uses 8080. Ctrl+C stops the services started by this launcher. Logs append under the configured `DATA_DIR/logs` directory. Missing model files may leave inference degraded; startup reports that status instead of claiming the models are ready. Role tokens stay in `.env` and are not printed by the launcher.
 
 ---
 
@@ -246,7 +246,7 @@ To also launch the local hardware camera streamer:
 python -m scripts.launch --camera
 ```
 
-Open `http://127.0.0.1:5173` in your browser. Copy your `ADMIN_API_TOKEN` or `OPERATOR_API_TOKEN` from `.env` to sign into the dashboard.
+Open `http://127.0.0.1:5174` in your browser. Copy your `ADMIN_API_TOKEN` or `OPERATOR_API_TOKEN` from `.env` to sign into the dashboard.
 
 ---
 
@@ -259,7 +259,7 @@ python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
 # Audio AI Service (Port 5001)
 python -m uvicorn ai_service.audio.audio_api:app --host 127.0.0.1 --port 5001
 
-# Frontend Vite Dev Server (Port 5173)
+# Frontend Vite Dev Server (Port 5174)
 cd frontend && npm run dev
 
 # Authenticated Camera Streamer (Port 8080)
