@@ -1,12 +1,27 @@
 import { useState } from "react";
+import SeverityBadge from "../components/SeverityBadge";
 import SectionHeader from "../components/SectionHeader";
-import { TriangleAlert, CheckCircle2, Brain, ThumbsUp, ThumbsDown, AlertOctagon, X } from "lucide-react";
+import {
+  TriangleAlert,
+  ShieldCheck,
+  CheckCircle2,
+  Brain,
+  ThumbsUp,
+  ThumbsDown,
+  AlertOctagon,
+  X,
+} from "lucide-react";
 import GlassButton from "../components/GlassButton";
 import { COLORS } from "../constants/theme";
 import { motion, AnimatePresence } from "framer-motion";
 import { API_BASE, apiFetch } from "../api/client";
 
-export default function AlertsPage({ alertFilter, filteredAlerts, handleResolveAlert, setAlertFilter }) {
+export default function AlertsPage({
+  alertFilter,
+  filteredAlerts,
+  handleResolveAlert,
+  setAlertFilter,
+}) {
   const [selectedXai, setSelectedXai] = useState(null);
   const [xaiLoading, setXaiLoading] = useState(false);
   const [feedbackState, setFeedbackState] = useState({});
@@ -23,7 +38,7 @@ export default function AlertsPage({ alertFilter, filteredAlerts, handleResolveA
         setSelectedXai({
           alert,
           data: {
-            rationale: `Alert triggered by ${alert.threat_level || 'MONITORED'} event at camera node ${alert.camera_id || 'UNKNOWN'}.`,
+            rationale: `Alert triggered by ${alert.threat_level || "MONITORED"} event at camera node ${alert.camera_id || "UNKNOWN"}.`,
             sensor_modalities: ["vision"],
             uncertainty_score: 0.12,
             camera_health_score: 0.95,
@@ -45,9 +60,12 @@ export default function AlertsPage({ alertFilter, filteredAlerts, handleResolveA
           sensor_modalities: ["vision"],
           uncertainty_score: 0.15,
           camera_health_score: 0.92,
-          evidence_checklist: ["Visual target detected", "Spatial geofence breach"],
+          evidence_checklist: [
+            "Visual target detected",
+            "Spatial geofence breach",
+          ],
           model_cascade: "Nano -> Verified",
-          threshold_audit: { confidence: 0.80, min_threshold: 0.45 },
+          threshold_audit: { confidence: 0.8, min_threshold: 0.45 },
         },
       });
     } finally {
@@ -57,10 +75,13 @@ export default function AlertsPage({ alertFilter, filteredAlerts, handleResolveA
 
   const handleFeedback = async (alertId, classification) => {
     try {
-      setFeedbackState((prev) => ({ ...prev, [alertId]: { classification, status: 'submitting' } }));
+      setFeedbackState((prev) => ({
+        ...prev,
+        [alertId]: { classification, status: "submitting" },
+      }));
       const res = await apiFetch(`${API_BASE}/alerts/${alertId}/feedback`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           classification,
           ranger_id: "ranger_alpha_1",
@@ -68,17 +89,26 @@ export default function AlertsPage({ alertFilter, filteredAlerts, handleResolveA
         }),
       });
       if (res.ok) {
-        setFeedbackState((prev) => ({ ...prev, [alertId]: { classification, status: 'saved' } }));
+        setFeedbackState((prev) => ({
+          ...prev,
+          [alertId]: { classification, status: "saved" },
+        }));
       } else {
-        setFeedbackState((prev) => ({ ...prev, [alertId]: { classification, status: 'error' } }));
+        setFeedbackState((prev) => ({
+          ...prev,
+          [alertId]: { classification, status: "error" },
+        }));
       }
     } catch {
-      setFeedbackState((prev) => ({ ...prev, [alertId]: { classification, status: 'error' } }));
+      setFeedbackState((prev) => ({
+        ...prev,
+        [alertId]: { classification, status: "error" },
+      }));
     }
   };
 
   return (
-    <div className="glass-panel" style={{ padding: 23 }}>
+    <div className="glass-panel alerts-panel" style={{ padding: 23 }}>
       <div
         style={{
           display: "flex",
@@ -118,8 +148,14 @@ export default function AlertsPage({ alertFilter, filteredAlerts, handleResolveA
             borderRadius: 12,
             color: COLORS.dim,
           }}
+          className="empty-state"
         >
-          No incident records found.
+          <ShieldCheck size={30} />
+          <h3>No incidents in this view</h3>
+          <p>
+            New detections will appear here. Try another severity filter to see
+            other records.
+          </p>
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -131,7 +167,7 @@ export default function AlertsPage({ alertFilter, filteredAlerts, handleResolveA
                 key={alert.id}
                 initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
-                className={critical ? "danger-pulse" : ""}
+                className={`incident-row ${alert.resolved ? "incident-resolved" : critical ? "incident-critical" : alert.threat_level === "HIGH" ? "incident-high" : "incident-monitored"}`}
                 style={{
                   display: "flex",
                   justifyContent: "space-between",
@@ -148,23 +184,20 @@ export default function AlertsPage({ alertFilter, filteredAlerts, handleResolveA
                 }}
               >
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div
+                    className="incident-heading"
+                    style={{ display: "flex", alignItems: "center", gap: 10 }}
+                  >
                     <strong style={{ fontSize: 13 }}>
                       {alert.camera_id || alert.cam || "UNKNOWN NODE"}
                     </strong>
 
-                    <span
-                      style={{
-                        color: critical ? "#ef4444" : "#f59e0b",
-                        fontSize: 10,
-                        fontWeight: 800,
-                      }}
-                    >
-                      {alert.threat_level || alert.threat || "MONITORED"}
-                    </span>
+                    <SeverityBadge level={alert.threat_level || alert.threat} />
                   </div>
 
-                  <div style={{ color: COLORS.dim, fontSize: 10, marginTop: 5 }}>
+                  <div
+                    style={{ color: COLORS.dim, fontSize: 10, marginTop: 5 }}
+                  >
                     {alert.timestamp
                       ? new Date(alert.timestamp).toLocaleString()
                       : "Recent event"}
@@ -198,6 +231,7 @@ export default function AlertsPage({ alertFilter, filteredAlerts, handleResolveA
                 </div>
 
                 <div
+                  className="incident-actions"
                   style={{
                     display: "flex",
                     flexDirection: "column",
@@ -206,7 +240,9 @@ export default function AlertsPage({ alertFilter, filteredAlerts, handleResolveA
                     flexShrink: 0,
                   }}
                 >
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <div
+                    style={{ display: "flex", alignItems: "center", gap: 6 }}
+                  >
                     <GlassButton
                       onClick={() => handleExplain(alert)}
                       icon={<Brain size={14} color="#38bdf8" />}
@@ -239,44 +275,60 @@ export default function AlertsPage({ alertFilter, filteredAlerts, handleResolveA
                   </div>
 
                   {/* Ranger HITL Feedback Actions */}
-                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                    <span style={{ fontSize: 10, color: COLORS.dim, marginRight: 2 }}>
+                  <div
+                    style={{ display: "flex", alignItems: "center", gap: 4 }}
+                  >
+                    <span
+                      style={{
+                        fontSize: 10,
+                        color: COLORS.dim,
+                        marginRight: 2,
+                      }}
+                    >
                       Ranger Audit:
                     </span>
-                    {feedbackState[alert.id]?.status === 'saved' ? (
+                    {feedbackState[alert.id]?.status === "saved" ? (
                       <span
                         style={{
                           fontSize: 10,
                           padding: "2px 8px",
                           borderRadius: 4,
                           background:
-                            feedbackState[alert.id].classification === 'TRUE_THREAT'
-                              ? 'rgba(239,68,68,0.15)'
-                              : 'rgba(74,222,128,0.15)',
+                            feedbackState[alert.id].classification ===
+                            "TRUE_THREAT"
+                              ? "rgba(239,68,68,0.15)"
+                              : "rgba(74,222,128,0.15)",
                           color:
-                            feedbackState[alert.id].classification === 'TRUE_THREAT'
-                              ? '#ef4444'
-                              : '#4ade80',
+                            feedbackState[alert.id].classification ===
+                            "TRUE_THREAT"
+                              ? "#ef4444"
+                              : "#4ade80",
                           fontWeight: 600,
                         }}
                       >
-                        ✓ {feedbackState[alert.id].classification.replace('_', ' ')}
+                        ✓{" "}
+                        {feedbackState[alert.id].classification.replace(
+                          "_",
+                          " ",
+                        )}
                       </span>
                     ) : (
                       <>
                         <button
                           title="Confirm as True Threat"
-                          onClick={() => handleFeedback(alert.id, 'TRUE_THREAT')}
+                          onClick={() =>
+                            handleFeedback(alert.id, "TRUE_THREAT")
+                          }
                           style={{
-                            background: 'rgba(239,68,68,0.1)',
-                            border: '1px solid rgba(239,68,68,0.3)',
-                            color: '#f87171',
-                            padding: '3px 7px',
+                            background: "rgba(239,68,68,0.1)",
+                            border: "1px solid rgba(239,68,68,0.3)",
+                            color: "#f87171",
+                            padding: "3px 7px",
                             borderRadius: 4,
                             fontSize: 10,
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
                             gap: 3,
                           }}
                         >
@@ -284,17 +336,19 @@ export default function AlertsPage({ alertFilter, filteredAlerts, handleResolveA
                         </button>
                         <button
                           title="Mark as False Positive"
-                          onClick={() => handleFeedback(alert.id, 'FALSE_POSITIVE')}
+                          onClick={() =>
+                            handleFeedback(alert.id, "FALSE_POSITIVE")
+                          }
                           style={{
-                            background: 'rgba(245,158,11,0.1)',
-                            border: '1px solid rgba(245,158,11,0.3)',
-                            color: '#fbbf24',
-                            padding: '3px 7px',
+                            background: "rgba(245,158,11,0.1)",
+                            border: "1px solid rgba(245,158,11,0.3)",
+                            color: "#fbbf24",
+                            padding: "3px 7px",
                             borderRadius: 4,
                             fontSize: 10,
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
                             gap: 3,
                           }}
                         >
@@ -302,17 +356,19 @@ export default function AlertsPage({ alertFilter, filteredAlerts, handleResolveA
                         </button>
                         <button
                           title="Save to Hard-Negative Pipeline for Retraining"
-                          onClick={() => handleFeedback(alert.id, 'HARD_NEGATIVE')}
+                          onClick={() =>
+                            handleFeedback(alert.id, "HARD_NEGATIVE")
+                          }
                           style={{
-                            background: 'rgba(168,85,247,0.1)',
-                            border: '1px solid rgba(168,85,247,0.3)',
-                            color: '#c084fc',
-                            padding: '3px 7px',
+                            background: "rgba(168,85,247,0.1)",
+                            border: "1px solid rgba(168,85,247,0.3)",
+                            color: "#c084fc",
+                            padding: "3px 7px",
                             borderRadius: 4,
                             fontSize: 10,
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
                             gap: 3,
                           }}
                         >
@@ -336,13 +392,13 @@ export default function AlertsPage({ alertFilter, filteredAlerts, handleResolveA
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             style={{
-              position: 'fixed',
+              position: "fixed",
               inset: 0,
-              background: 'rgba(0,0,0,0.75)',
-              backdropFilter: 'blur(6px)',
+              background: "rgba(0,0,0,0.75)",
+              backdropFilter: "blur(6px)",
               zIndex: 1000,
-              display: 'grid',
-              placeItems: 'center',
+              display: "grid",
+              placeItems: "center",
               padding: 20,
             }}
             onClick={() => setSelectedXai(null)}
@@ -353,64 +409,73 @@ export default function AlertsPage({ alertFilter, filteredAlerts, handleResolveA
               exit={{ scale: 0.94, opacity: 0 }}
               onClick={(e) => e.stopPropagation()}
               style={{
-                background: '#04130d',
-                border: '1px solid rgba(74,222,128,0.25)',
+                background: "#04130d",
+                border: "1px solid rgba(74,222,128,0.25)",
                 borderRadius: 14,
-                width: '100%',
+                width: "100%",
                 maxWidth: 620,
                 padding: 24,
                 color: COLORS.text,
-                maxHeight: '90vh',
-                overflowY: 'auto',
-                boxShadow: '0 20px 40px rgba(0,0,0,0.6)',
+                maxHeight: "90vh",
+                overflowY: "auto",
+                boxShadow: "0 20px 40px rgba(0,0,0,0.6)",
               }}
             >
               <div
                 style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  borderBottom: '1px solid rgba(255,255,255,0.08)',
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  borderBottom: "1px solid rgba(255,255,255,0.08)",
                   paddingBottom: 14,
                   marginBottom: 16,
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   <Brain size={22} color="#38bdf8" />
                   <div>
                     <div style={{ fontWeight: 800, fontSize: 16 }}>
                       Explainable AI (XAI) Decision Audit
                     </div>
                     <div style={{ fontSize: 11, color: COLORS.dim }}>
-                      Incident ID #{selectedXai.alert?.id} • Node: {selectedXai.alert?.camera_id || 'UNKNOWN'}
+                      Incident ID #{selectedXai.alert?.id} • Node:{" "}
+                      {selectedXai.alert?.camera_id || "UNKNOWN"}
                     </div>
                   </div>
                 </div>
                 <button
                   onClick={() => setSelectedXai(null)}
                   style={{
-                    background: 'transparent',
-                    border: 'none',
+                    background: "transparent",
+                    border: "none",
                     color: COLORS.dim,
-                    cursor: 'pointer',
+                    cursor: "pointer",
                     padding: 4,
                   }}
                 >
-                  <X size={18} />
+                  <X size={18} aria-label="Close decision explanation" />
                 </button>
               </div>
 
               {xaiLoading ? (
-                <div style={{ padding: 40, textAlign: 'center', color: COLORS.dim }}>
+                <div
+                  style={{
+                    padding: 40,
+                    textAlign: "center",
+                    color: COLORS.dim,
+                  }}
+                >
                   Generating Explainable Audit Trace...
                 </div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div
+                  style={{ display: "flex", flexDirection: "column", gap: 16 }}
+                >
                   {/* Rationale Card */}
                   <div
                     style={{
-                      background: 'rgba(56,189,248,0.06)',
-                      border: '1px solid rgba(56,189,248,0.2)',
+                      background: "rgba(56,189,248,0.06)",
+                      border: "1px solid rgba(56,189,248,0.2)",
                       borderRadius: 10,
                       padding: 14,
                     }}
@@ -419,7 +484,7 @@ export default function AlertsPage({ alertFilter, filteredAlerts, handleResolveA
                       style={{
                         fontSize: 11,
                         fontWeight: 700,
-                        color: '#38bdf8',
+                        color: "#38bdf8",
                         marginBottom: 4,
                       }}
                     >
@@ -427,66 +492,92 @@ export default function AlertsPage({ alertFilter, filteredAlerts, handleResolveA
                     </div>
                     <div style={{ fontSize: 13, lineHeight: 1.5 }}>
                       {selectedXai.data?.rationale ||
-                        'Alert escalated based on multi-frame human persistence in restricted core boundary.'}
+                        "Alert escalated based on multi-frame human persistence in restricted core boundary."}
                     </div>
                   </div>
 
                   {/* Telemetry Metrics */}
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(3, 1fr)",
+                      gap: 10,
+                    }}
+                  >
                     <div
                       style={{
-                        background: 'rgba(255,255,255,0.03)',
-                        border: '1px solid rgba(255,255,255,0.06)',
+                        background: "rgba(255,255,255,0.03)",
+                        border: "1px solid rgba(255,255,255,0.06)",
                         borderRadius: 8,
                         padding: 12,
                       }}
                     >
-                      <div style={{ fontSize: 10, color: COLORS.dim }}>Uncertainty Score (𝒰)</div>
+                      <div style={{ fontSize: 10, color: COLORS.dim }}>
+                        Uncertainty Score (𝒰)
+                      </div>
                       <div
                         style={{
                           fontSize: 18,
                           fontWeight: 800,
                           color:
                             (selectedXai.data?.uncertainty_score ?? 0) > 0.35
-                              ? '#f59e0b'
-                              : '#4ade80',
+                              ? "#f59e0b"
+                              : "#4ade80",
                           marginTop: 4,
                         }}
                       >
-                        {Number(selectedXai.data?.uncertainty_score ?? 0.12).toFixed(2)}
+                        {Number(
+                          selectedXai.data?.uncertainty_score ?? 0.12,
+                        ).toFixed(2)}
                       </div>
                     </div>
                     <div
                       style={{
-                        background: 'rgba(255,255,255,0.03)',
-                        border: '1px solid rgba(255,255,255,0.06)',
+                        background: "rgba(255,255,255,0.03)",
+                        border: "1px solid rgba(255,255,255,0.06)",
                         borderRadius: 8,
                         padding: 12,
                       }}
                     >
-                      <div style={{ fontSize: 10, color: COLORS.dim }}>Sensor Health (ℋ)</div>
-                      <div style={{ fontSize: 18, fontWeight: 800, color: '#4ade80', marginTop: 4 }}>
-                        {Math.round((selectedXai.data?.camera_health_score ?? 0.95) * 100)}%
+                      <div style={{ fontSize: 10, color: COLORS.dim }}>
+                        Sensor Health (ℋ)
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 18,
+                          fontWeight: 800,
+                          color: "#4ade80",
+                          marginTop: 4,
+                        }}
+                      >
+                        {Math.round(
+                          (selectedXai.data?.camera_health_score ?? 0.95) * 100,
+                        )}
+                        %
                       </div>
                     </div>
                     <div
                       style={{
-                        background: 'rgba(255,255,255,0.03)',
-                        border: '1px solid rgba(255,255,255,0.06)',
+                        background: "rgba(255,255,255,0.03)",
+                        border: "1px solid rgba(255,255,255,0.06)",
                         borderRadius: 8,
                         padding: 12,
                       }}
                     >
-                      <div style={{ fontSize: 10, color: COLORS.dim }}>Modalities Triggered</div>
+                      <div style={{ fontSize: 10, color: COLORS.dim }}>
+                        Modalities Triggered
+                      </div>
                       <div
                         style={{
                           fontSize: 13,
                           fontWeight: 700,
-                          color: '#38bdf8',
+                          color: "#38bdf8",
                           marginTop: 6,
                         }}
                       >
-                        {(selectedXai.data?.sensor_modalities || ['vision']).join(', ').toUpperCase()}
+                        {(selectedXai.data?.sensor_modalities || ["vision"])
+                          .join(", ")
+                          .toUpperCase()}
                       </div>
                     </div>
                   </div>
@@ -494,8 +585,8 @@ export default function AlertsPage({ alertFilter, filteredAlerts, handleResolveA
                   {/* Cascade Trace */}
                   <div
                     style={{
-                      background: 'rgba(255,255,255,0.02)',
-                      border: '1px solid rgba(255,255,255,0.06)',
+                      background: "rgba(255,255,255,0.02)",
+                      border: "1px solid rgba(255,255,255,0.06)",
                       borderRadius: 10,
                       padding: 14,
                     }}
@@ -504,23 +595,23 @@ export default function AlertsPage({ alertFilter, filteredAlerts, handleResolveA
                       style={{
                         fontSize: 11,
                         fontWeight: 700,
-                        color: '#4ade80',
+                        color: "#4ade80",
                         marginBottom: 6,
                       }}
                     >
                       INFERENCE CASCADE PATH
                     </div>
-                    <div style={{ fontSize: 12, color: '#cbd5e1' }}>
+                    <div style={{ fontSize: 12, color: "#cbd5e1" }}>
                       {selectedXai.data?.model_cascade ||
-                        'Stage 1 (YOLO11n Nano @ 5 FPS) → Uncertainty Trigger → Stage 2 (YOLO11s Verification) → Confirmed Threat'}
+                        "Stage 1 (YOLO11n Nano @ 5 FPS) → Uncertainty Trigger → Stage 2 (YOLO11s Verification) → Confirmed Threat"}
                     </div>
                   </div>
 
                   {/* Evidence Checklist */}
                   <div
                     style={{
-                      background: 'rgba(255,255,255,0.02)',
-                      border: '1px solid rgba(255,255,255,0.06)',
+                      background: "rgba(255,255,255,0.02)",
+                      border: "1px solid rgba(255,255,255,0.06)",
                       borderRadius: 10,
                       padding: 14,
                     }}
@@ -529,7 +620,7 @@ export default function AlertsPage({ alertFilter, filteredAlerts, handleResolveA
                       style={{
                         fontSize: 11,
                         fontWeight: 700,
-                        color: '#a78bfa',
+                        color: "#a78bfa",
                         marginBottom: 8,
                       }}
                     >
@@ -540,17 +631,19 @@ export default function AlertsPage({ alertFilter, filteredAlerts, handleResolveA
                         margin: 0,
                         paddingLeft: 18,
                         fontSize: 12,
-                        display: 'flex',
-                        flexDirection: 'column',
+                        display: "flex",
+                        flexDirection: "column",
                         gap: 6,
                       }}
                     >
-                      {(selectedXai.data?.evidence_checklist || [
-                        "Human target tracked across > 3 continuous frames",
-                        "Spatial position within sanctuary restricted boundary",
-                        "Absence of authorized patrol transponder",
-                      ]).map((item, idx) => (
-                        <li key={idx} style={{ color: '#e2e8f0' }}>
+                      {(
+                        selectedXai.data?.evidence_checklist || [
+                          "Human target tracked across > 3 continuous frames",
+                          "Spatial position within sanctuary restricted boundary",
+                          "Absence of authorized patrol transponder",
+                        ]
+                      ).map((item, idx) => (
+                        <li key={idx} style={{ color: "#e2e8f0" }}>
                           {item}
                         </li>
                       ))}
