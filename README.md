@@ -184,19 +184,25 @@ Failures are **never silently downgraded to LOW**:
 ## 4. Quickstart
 
 ### Prerequisites
-- **Python**: 3.10 - 3.13 (64-bit)
-- **Node.js**: 20 LTS or 24 LTS with `npm`
+- **Python**: 3.13 (64-bit)
+- **Node.js**: 24 with `npm`
 
 ### One-Click Launch (Windows)
 Double-click `start.bat` or run from PowerShell:
 ```powershell
 .\start.bat
 ```
-`start.bat` will automatically:
-1. Verify the Python virtual environment and Node.js.
-2. Initialize `.env` with secure role tokens if missing.
-3. Install frontend dependencies if needed.
-4. Launch the Backend (8000), Audio Service (5001), and Frontend (5173).
+`start.bat` creates `.venv` when needed, installs the pinned backend requirements, preserves an existing `.env`, and synchronizes frontend dependencies with `package-lock.json` using `npm ci`. It starts only this checkout's services and opens the browser after they respond. Existing services on required ports cause a clear error; they are never killed or silently reused.
+
+```powershell
+.\start.bat --setup                 # Install/refresh dependencies without starting services
+.\start.bat --check                 # Check configuration, dependencies and ports without installing
+.\start.bat --frontend-port 5174     # Use another frontend port through the guarded local proxy
+.\start.bat --camera                # Also start the local camera streamer
+.\start.bat --no-browser            # Start services without opening a browser
+```
+
+Default service ports are backend 8000, audio 5001 and frontend 5173; `--camera` also uses 8080. Ctrl+C stops the services started by this launcher. Logs append under the configured `DATA_DIR/logs` directory. Missing model files may leave inference degraded; startup reports that status instead of claiming the models are ready. Role tokens stay in `.env` and are not printed by the launcher.
 
 ---
 
@@ -204,8 +210,9 @@ Double-click `start.bat` or run from PowerShell:
 
 #### 1. Set Up Python Virtual Environment
 ```bash
-# Create virtual environment
-python -m venv .venv
+# Windows: create virtual environment
+py -3.13 -m venv .venv
+# macOS/Linux: python3.13 -m venv .venv
 
 # Activate environment
 # On Windows (PowerShell):
@@ -226,7 +233,7 @@ This generates a local `.env` file populated with unique, secure tokens for `ADM
 #### 3. Install Frontend Dependencies
 ```bash
 cd frontend
-npm install
+npm ci
 cd ..
 ```
 
