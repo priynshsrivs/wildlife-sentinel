@@ -4,4 +4,18 @@ import { defineConfig } from 'vite'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  server: {
+    proxy: {
+      '/api': { target: 'http://127.0.0.1:8000', changeOrigin: true },
+      '/ws': {
+        target: 'ws://127.0.0.1:8000', ws: true, changeOrigin: true,
+        // Present the canonical local frontend origin to the backend's WS gate.
+        configure(proxy) {
+          proxy.on('proxyReqWs', (request) => {
+            request.setHeader('origin', 'http://127.0.0.1:5173');
+          });
+        },
+      },
+    },
+  },
 })

@@ -1,4 +1,9 @@
-export const API_BASE = (import.meta.env?.VITE_API_BASE || 'http://127.0.0.1:8000/api').replace(/\/$/, '');
+// Vite forwards local API/WebSocket traffic so alternate dev ports work without
+// expanding the backend's allowed browser origins. Explicit API overrides win.
+const defaultApiBase = import.meta.env?.DEV
+  ? `${window.location.origin}/api`
+  : 'http://127.0.0.1:8000/api';
+export const API_BASE = (import.meta.env?.VITE_API_BASE || defaultApiBase).replace(/\/$/, '');
 const backend = new URL(API_BASE);
 export const WS_URL = new URL('/ws/alerts', backend);
 WS_URL.protocol = backend.protocol === 'https:' ? 'wss:' : 'ws:';

@@ -9,6 +9,7 @@ export default function AuthGate({ children }) {
   const [busy, setBusy] = useState(false);
   async function login(event) {
     event.preventDefault();
+    setError("");
     setBusy(true);
     setToken(credential);
     try {
@@ -19,7 +20,9 @@ export default function AuthGate({ children }) {
       setAuthenticated(true);
     } catch (failure) {
       setToken("");
-      setError(failure.message);
+      setError(failure instanceof TypeError
+        ? "Cannot reach the backend. Check that it is running and that this website's address is allowed."
+        : failure.message);
     } finally {
       setBusy(false);
     }

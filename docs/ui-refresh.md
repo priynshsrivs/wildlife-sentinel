@@ -31,7 +31,7 @@ cd frontend
 npm ci
 ```
 
-Copy `.env.example` to `.env` if needed and set `VITE_API_BASE` to your backend API, normally `http://127.0.0.1:8000/api`. Start the backend and other services using the root README, then run:
+Copy `.env.example` to `.env` if needed. Leave `VITE_API_BASE` empty during local development: Vite forwards API and WebSocket requests to port 8000, including when the frontend uses an alternate port. The WebSocket proxy presents the canonical local frontend origin (5173) to the backend. For a separately hosted API, set its absolute URL and configure the backend to allow your frontend origin. Production keeps the existing default API address. Start the backend and other services using the root README, then run:
 
 ```sh
 npm run dev
