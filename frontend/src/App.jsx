@@ -11,7 +11,7 @@ const MapPage = lazy(() => import("./pages/MapPage"));
 const AnalyticsPage = lazy(() => import("./pages/AnalyticsPage"));
 import CamerasPage from "./pages/CamerasPage";
 import SettingsPage from "./pages/SettingsPage";
-const BenchmarkPage = lazy(() => import("./pages/BenchmarkPage"));
+import ClearLogsDialog from "./components/ClearLogsDialog";
 
 import LandingExperience from "./pages/LandingExperience";
 import StatusBadge from "./components/StatusBadge";
@@ -57,7 +57,6 @@ import {
   X,
   Menu,
   ChevronRight,
-  Cpu,
 } from "lucide-react";
 
 import L from "leaflet";
@@ -153,6 +152,9 @@ export default function App({ role = "viewer" }) {
   const [selectedAlert, setSelectedAlert] = useState(null);
 
   const [refreshing, setRefreshing] = useState(false);
+  const [clearLogsOpen, setClearLogsOpen] = useState(false);
+  const [clearingLogs, setClearingLogs] = useState(false);
+  const [clearLogsError, setClearLogsError] = useState("");
 
   const [toast, setToast] = useState(null);
 
@@ -737,32 +739,38 @@ ALERT MANAGEMENT
   };
 
   const handleClearAlerts = async () => {
-    if (!canAdmin) return;
-    const confirmed = window.confirm("Clear all security logs?");
-
-    if (!confirmed) {
-      return;
-    }
-
+    if (!canOperate || clearingLogs) return;
+    setClearingLogs(true);
+    setClearLogsError("");
     try {
       const response = await apiFetch(`${API_BASE}/alerts/clear`, {
         method: "DELETE",
+        timeoutMs: 10000,
       });
 
       if (!response.ok) {
-        throw new Error(`Backend returned HTTP ${response.status}`);
+        throw new Error(
+          await responseError(response, "Could not clear security log"),
+        );
       }
 
       alertRevision.current++;
       setAlerts([]);
+      setSelectedAlert(null);
+      setClearLogsOpen(false);
 
       await fetchAllData(true);
 
       showToast("Security log cleared", "success");
     } catch (error) {
-      console.error("Clear alerts failed:", error);
-
-      showToast("Could not clear security log", "danger");
+      setClearLogsError(
+        error.name === "TimeoutError"
+          ? "The server took too long to respond. Refresh the log to check its status, then try again."
+          : error.message ||
+              "Could not reach the server. Check the backend and try again.",
+      );
+    } finally {
+      setClearingLogs(false);
     }
   };
 
@@ -870,11 +878,6 @@ NAVIGATION
       id: "cameras",
       label: "Camera Network",
       icon: <Server size={18} />,
-    },
-    {
-      id: "benchmark",
-      label: "AI Research",
-      icon: <Cpu size={18} />,
     },
     {
       id: "settings",
@@ -1228,11 +1231,18 @@ MAIN DASHBOARD
               />
 
               <GlassButton
-                disabled={!canAdmin}
+                disabled={!canOperate || clearingLogs}
                 aria-label="Clear all alerts"
-                title="Clear all alerts"
+                title={
+                  canOperate
+                    ? "Clear all security logs"
+                    : "Sign in as an operator or admin to clear logs"
+                }
                 danger
-                onClick={handleClearAlerts}
+                onClick={() => {
+                  setClearLogsError("");
+                  setClearLogsOpen(true);
+                }}
                 icon={<Trash2 size={15} />}
               />
             </div>
@@ -1457,15 +1467,6 @@ MAIN DASHBOARD
                 />
               )}
 
-              {/* =================================================
-              RESEARCH & BENCHMARK
-          ================================================= */}
-
-              {activeTab === "benchmark" && (
-                <Suspense fallback={<p>Loading research dashboard…</p>}>
-                  <BenchmarkPage />
-                </Suspense>
-              )}
 
               {/* =================================================
               SETTINGS
@@ -1681,6 +1682,15 @@ MAIN DASHBOARD
           </motion.div>
         )}
       </AnimatePresence>
+
+      {clearLogsOpen && (
+        <ClearLogsDialog
+          busy={clearingLogs}
+          error={clearLogsError}
+          onCancel={() => setClearLogsOpen(false)}
+          onConfirm={handleClearAlerts}
+        />
+      )}
 
       {/* =====================================================
       TOAST

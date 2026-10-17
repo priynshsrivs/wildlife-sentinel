@@ -272,8 +272,8 @@ python mjpeg_server.py
 
 1. **Role-Based Access Control (RBAC)**:
    - `viewer`: Read-only access to stats, alerts, cameras.
-   - `operator`: Sensor detection ingestion, alert resolution.
-   - `admin`: System configuration, alert clearing.
+   - `operator`: Sensor detection ingestion, alert resolution and log clearing.
+   - `admin`: All operator actions and system configuration.
    - `service`: Internal inter-service communication token.
 2. **WebSocket Single-Use Tickets**:
    - Clients exchange their token for a short-lived, single-use ticket via `POST /api/auth/ws-ticket`.

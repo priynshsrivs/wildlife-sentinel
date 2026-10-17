@@ -539,7 +539,7 @@ async def resolve_alert(alert_id: str):
     return {"status": "success", "id": alert_id, "resolved": True}
 
 
-@app.delete("/api/alerts/clear", dependencies=[admin])
+@app.delete("/api/alerts/clear", dependencies=[Depends(require("operator"))])
 async def clear_alerts():
     def clear():
         with store.connection(write=True) as db:

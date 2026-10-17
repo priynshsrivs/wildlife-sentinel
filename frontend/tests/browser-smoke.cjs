@@ -262,7 +262,6 @@ async function freePort() {
         "Reserve Map",
         "Analytics",
         "Camera Network",
-        "AI Research",
         "Settings",
         "Live Monitoring",
       ]) {
@@ -317,6 +316,33 @@ async function freePort() {
       );
     await page.getByRole("button", { name: "Sign out", exact: true }).click();
     await login("operator");
+    assert.equal(await page.getByRole("button", { name: "AI Research", exact: true }).count(), 0);
+    const clearButton = page.getByRole("button", { name: "Clear all alerts", exact: true });
+    assert.equal(await clearButton.isDisabled(), false);
+    const alertsBeforeClear = await page.evaluate(async () => {
+      const response = await fetch('/api/alerts', { headers: { Authorization: 'Bearer browser-test-operator' } });
+      return (await response.json()).length;
+    });
+    assert.ok(alertsBeforeClear > 0);
+    await clearButton.click();
+    await page.getByRole("dialog", { name: "Clear security logs?" }).waitFor();
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    assert.equal(await page.getByRole("dialog").count(), 0);
+    await page.route("**/api/alerts/clear", route => route.fulfill({ status: 503, json: { detail: "Database temporarily unavailable" } }));
+    await clearButton.click();
+    await page.getByRole("button", { name: "Clear logs", exact: true }).click();
+    await page.getByRole("alert").filter({ hasText: "Database temporarily unavailable" }).waitFor();
+    await page.unroute("**/api/alerts/clear");
+    const cleared = page.waitForResponse(response => response.url().endsWith('/api/alerts/clear') && response.request().method() === 'DELETE');
+    await page.getByRole("button", { name: "Clear logs", exact: true }).click();
+    assert.equal((await cleared).status(), 200);
+    await page.getByText("Security log cleared", { exact: true }).waitFor();
+    assert.equal(await page.getByRole("dialog").count(), 0);
+    const remaining = await page.evaluate(async () => {
+      const response = await fetch('/api/alerts', { headers: { Authorization: 'Bearer browser-test-operator' } });
+      return await response.json();
+    });
+    assert.deepEqual(remaining, []);
     await nav("Settings");
     assert.equal(await page.locator("input[type=number]").isDisabled(), true);
     await nav("Camera Hub");
@@ -342,7 +368,7 @@ async function freePort() {
       .waitFor();
     assert.deepEqual(errors, []);
     console.log(
-      "PASS: actual backend contracts; image/video/audio ingestion; live updates; feedback/export; evidence and failure states; resolve; settings; nine tabs at 1440/390/320px; viewer/operator permissions.",
+      "PASS: actual backend contracts; image/video/audio ingestion; live updates; feedback/export; evidence and failure states; resolve; settings; eight tabs at 1440/390/320px; viewer/operator permissions; clear logs cancellation, failure and retry.",
     );
     console.log("Isolated browser-test data: " + directory);
   } finally {

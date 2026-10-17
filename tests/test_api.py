@@ -34,7 +34,14 @@ def test_roles(client):
     operator = {"Authorization": "Bearer test-operator"}
     assert client.get("/api/alerts", headers=viewer).status_code == 200
     assert client.post("/api/settings", headers=viewer, json={}).status_code == 403
-    assert client.delete("/api/alerts/clear", headers=operator).status_code == 403
+    assert client.delete("/api/alerts/clear", headers=viewer).status_code == 403
+    assert client.delete("/api/alerts/clear", headers=operator).status_code == 200
+    assert (
+        client.delete(
+            "/api/alerts/clear", headers={"Authorization": "Bearer test-service"}
+        ).status_code
+        == 403
+    )
     assert (
         client.post(
             "/api/settings", headers={"Authorization": "Bearer test-service"}, json={}
