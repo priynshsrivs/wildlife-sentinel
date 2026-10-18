@@ -213,6 +213,24 @@ Audio uploads accept WAV, MP3, FLAC and OGG recordings of 0.1–30 seconds, up t
 at 8–192 kHz with one or two channels. Camera Hub displays the acoustic label, score, risk and
 persistence receipt after an upload. Restart services after installing a previously missing model.
 
+### ESP32 alarms for vision and audio
+
+With the website running, connect the ESP32 by USB and run `start_hardware.bat` in a second
+terminal. It uses COM7 by default; use `start_hardware.bat --port COM8` for another port,
+or configure `HARDWARE_SERIAL_PORT` in `.env`. Close Arduino Serial Monitor before connecting.
+
+| Unresolved HIGH/CRITICAL detection | Existing ESP32 command | Alarm |
+| --- | --- | --- |
+| Person, gunshot/gunfire, explosion | `PERSON` | Continuous buzzer, red LED |
+| Car, vehicle, engine, chainsaw, sawing | `CAR` | Interval buzzer, red LED |
+| No remaining matching alerts | `SAFE` | Buzzer off, green LED |
+
+Continuous alarms take priority. Speech, wildlife, ambient sounds and uncertain classifications
+do not activate the alarm. Resolve or clear all matching alerts to stop it. The listener scans
+all unresolved alert pages and reconnects after USB interruptions. Backend failures retain the
+last commanded state. Ctrl+C sends `SAFE` and closes the serial port. Firmware must already
+support `SAFE`, `CAR` and `PERSON` at 115200 baud; no firmware change is required for that version.
+
 ---
 
 ### Manual Setup (Step-by-Step)

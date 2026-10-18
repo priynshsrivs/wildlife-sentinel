@@ -12,6 +12,7 @@ scipy==1.18.1
 tensorflow==2.21.0
 python-dotenv==1.2.3
 requests==2.34.2
+pyserial==3.5
 httpx==0.28.1
 slowapi==0.1.9
 Flask==3.1.3
