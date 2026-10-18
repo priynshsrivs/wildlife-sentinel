@@ -1,12 +1,26 @@
 import { useState, useEffect } from "react";
-import { COLORS, DEFAULT_LOCATION } from "../constants/theme";
+import { COLORS } from "../constants/theme";
 import GlassButton from "../components/GlassButton";
 import { MapPin, Flame } from "lucide-react";
-import { MapContainer, TileLayer, Marker, Popup, Circle, Rectangle } from "react-leaflet";
+import {
+  MapContainer,
+  TileLayer,
+  Marker,
+  Popup,
+  Circle,
+  Rectangle,
+} from "react-leaflet";
 import MapRecenter from "../components/MapRecenter";
 import { API_BASE, apiFetch } from "../api/client";
 
-export default function MapPage({ alerts, geofenceRadius, location, locationStatus, rangerHQ, requestLocation }) {
+export default function MapPage({
+  alerts,
+  geofenceRadius,
+  location,
+  locationStatus,
+  rangerHQ,
+  requestLocation,
+}) {
   const [showHeatmap, setShowHeatmap] = useState(true);
   const [heatmapCells, setHeatmapCells] = useState([]);
 
@@ -52,11 +66,21 @@ export default function MapPage({ alerts, geofenceRadius, location, locationStat
             Reserve Intelligence Map
           </div>
           <div style={{ color: COLORS.dim, fontSize: 10, marginTop: 4 }}>
-            {locationStatus} • {heatmapCells.length > 0 ? `${heatmapCells.length} Active Patrol Grid Cells` : 'Patrol Grid Synchronized'}
+            {locationStatus} •{" "}
+            {heatmapCells.length > 0
+              ? `${heatmapCells.length} Active Patrol Grid Cells`
+              : "Patrol Grid Synchronized"}
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            alignItems: "center",
+            flexWrap: "wrap",
+          }}
+        >
           <GlassButton
             active={showHeatmap}
             onClick={() => setShowHeatmap(!showHeatmap)}
@@ -132,10 +156,10 @@ export default function MapPage({ alerts, geofenceRadius, location, locationStat
                 cell.priority_level === "CRITICAL"
                   ? "#ef4444"
                   : cell.priority_level === "ELEVATED"
-                  ? "#f97316"
-                  : cell.priority_level === "MODERATE"
-                  ? "#f59e0b"
-                  : "#4ade80";
+                    ? "#f97316"
+                    : cell.priority_level === "MODERATE"
+                      ? "#f59e0b"
+                      : "#4ade80";
 
               return (
                 <Rectangle
@@ -147,23 +171,33 @@ export default function MapPage({ alerts, geofenceRadius, location, locationStat
                   pathOptions={{
                     color,
                     fillColor: color,
-                    fillOpacity: Math.max(0.08, Math.min(0.45, (cell.risk_score || 0) * 0.45)),
+                    fillOpacity: Math.max(
+                      0.08,
+                      Math.min(0.45, (cell.risk_score || 0) * 0.45),
+                    ),
                     weight: 1,
                   }}
                 >
                   <Popup>
                     <div style={{ fontSize: 12, lineHeight: 1.4 }}>
-                      <strong style={{ fontSize: 13 }}>Grid Sector: {cell.cell_id}</strong>
+                      <strong style={{ fontSize: 13 }}>
+                        Grid Sector: {cell.cell_id}
+                      </strong>
                       <br />
-                      Risk Score: <strong>{Number(cell.risk_score || 0).toFixed(2)}</strong>
+                      Risk Score:{" "}
+                      <strong>{Number(cell.risk_score || 0).toFixed(2)}</strong>
                       <br />
-                      Priority: <span style={{ color, fontWeight: 700 }}>{cell.priority_level}</span>
+                      Priority:{" "}
+                      <span style={{ color, fontWeight: 700 }}>
+                        {cell.priority_level}
+                      </span>
                       <br />
                       Incidents: {cell.incident_count || 0}
                       {cell.primary_threat_type && (
                         <>
                           <br />
-                          Primary Threat: <strong>{cell.primary_threat_type}</strong>
+                          Primary Threat:{" "}
+                          <strong>{cell.primary_threat_type}</strong>
                         </>
                       )}
                     </div>
@@ -174,15 +208,15 @@ export default function MapPage({ alerts, geofenceRadius, location, locationStat
 
           {/* Alert markers */}
           {alerts.map((alert) => {
-            const lat =
-              alert.location?.lat ??
-              alert.latitude ??
-              DEFAULT_LOCATION.lat;
-
-            const lng =
-              alert.location?.lng ??
-              alert.longitude ??
-              DEFAULT_LOCATION.lng;
+            const lat = alert.location?.lat ?? alert.latitude;
+            const lng = alert.location?.lng ?? alert.longitude;
+            if (
+              !Number.isFinite(lat) ||
+              !Number.isFinite(lng) ||
+              Math.abs(lat) > 90 ||
+              Math.abs(lng) > 180
+            )
+              return null;
 
             const critical = alert.threat_level === "CRITICAL";
 
@@ -200,7 +234,8 @@ export default function MapPage({ alerts, geofenceRadius, location, locationStat
                     {alert.threat_level || "MONITORED"}
                   </span>
                   <br />
-                  {alert.timestamp && new Date(alert.timestamp).toLocaleString()}
+                  {alert.timestamp &&
+                    new Date(alert.timestamp).toLocaleString()}
                 </Popup>
               </Marker>
             );

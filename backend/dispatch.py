@@ -75,6 +75,17 @@ async def dispatch_once(store, client=None):
             alert = await asyncio.to_thread(store.get, row["alert_id"])
             if not alert:
                 continue
+            if alert["resolved"]:
+
+                def cancel():
+                    with store.connection(write=True) as db:
+                        db.execute(
+                            "UPDATE dispatch_outbox SET status='cancelled' WHERE id=? AND status='pending'",
+                            (row["id"],),
+                        )
+
+                await asyncio.to_thread(cancel)
+                continue
             settings = await asyncio.to_thread(store.settings)
             loc, hq = alert["location"], settings["ranger_hq"]
             distance = calculate_distance_km(

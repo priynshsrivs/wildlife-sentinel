@@ -14,14 +14,15 @@ DATABASE_PATH = Path(
     os.getenv("DATABASE_PATH", str(ROOT / "wildlife_sentinel.db"))
 ).resolve()
 VISION_MODE = os.getenv("VISION_MODE", "ANTI_POACHING").upper()
-NANO_MODEL_PATH = Path(
-    os.getenv("NANO_MODEL_PATH", str(ROOT / "yolo11n.pt"))
-).resolve()
+NANO_MODEL_PATH = Path(os.getenv("NANO_MODEL_PATH", str(ROOT / "yolo11n.pt"))).resolve()
 ESCALATION_MODEL_PATH = Path(
     os.getenv("ESCALATION_MODEL_PATH", str(ROOT / "yolo11s.pt"))
 ).resolve()
 VISION_MODEL_PATH = Path(
-    os.getenv("VISION_MODEL_PATH", str(NANO_MODEL_PATH if NANO_MODEL_PATH.is_file() else ROOT / "yolov8x.pt"))
+    os.getenv(
+        "VISION_MODEL_PATH",
+        str(NANO_MODEL_PATH if NANO_MODEL_PATH.is_file() else ROOT / "yolov8x.pt"),
+    )
 ).resolve()
 NANO_CONFIDENCE_HIGH = float(os.getenv("NANO_CONFIDENCE_HIGH", "0.70"))
 NANO_CONFIDENCE_LOW = float(os.getenv("NANO_CONFIDENCE_LOW", "0.30"))
@@ -37,10 +38,17 @@ INPUT_SIZE = int(os.getenv("INPUT_SIZE", "640"))
 LOW_LIGHT_ENHANCEMENT = os.getenv("LOW_LIGHT_ENHANCEMENT", "true").lower() == "true"
 DEBUG_TIMING = os.getenv("DEBUG_TIMING", "false").lower() == "true"
 CAMERA_ROIS = json.loads(os.getenv("CAMERA_ROIS_JSON", "{}"))
-YAMNET_MODEL_PATH = os.getenv("YAMNET_MODEL_PATH", "")
-FRONTEND_ORIGINS = os.getenv(
-    "FRONTEND_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
-).split(",")
+_audio_path = Path(os.getenv("YAMNET_MODEL_PATH") or "models/yamnet").expanduser()
+YAMNET_MODEL_PATH = str(
+    (_audio_path if _audio_path.is_absolute() else ROOT / _audio_path).resolve()
+)
+FRONTEND_ORIGINS = [
+    origin.strip().rstrip("/")
+    for origin in os.getenv(
+        "FRONTEND_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
+    ).split(",")
+    if origin.strip()
+]
 API_TOKENS = {
     role: os.getenv(f"{role.upper()}_API_TOKEN", "")
     for role in ("viewer", "operator", "admin")
@@ -69,7 +77,11 @@ DEFAULT_SETTINGS = {
 }
 # Only administrator-provisioned literal-IP camera endpoints are used for capture.
 CAMERA_ENDPOINTS = json.loads(os.getenv("CAMERA_ENDPOINTS_JSON", "{}"))
-CAMERA_ALLOWED_IPS = set(filter(None, os.getenv("CAMERA_ALLOWED_IPS", "").split(",")))
+CAMERA_ALLOWED_IPS = {
+    address.strip()
+    for address in os.getenv("CAMERA_ALLOWED_IPS", "").split(",")
+    if address.strip()
+}
 CAMERAS = json.loads(
     os.getenv(
         "CAMERAS_JSON",

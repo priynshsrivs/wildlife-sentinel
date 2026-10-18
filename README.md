@@ -6,6 +6,9 @@ Wildlife Sentinel combines real-time **computer vision (YOLOv8)** and **acoustic
 
 ---
 
+See [the interface refresh notes](docs/ui-refresh.md) for changed files, run commands and verification details.
+See [the reliability and security audit](docs/audit-fixes.md) for verified fixes, regression tests and backend restart notes.
+
 ## 1. System Architecture
 
 ```
@@ -24,14 +27,14 @@ Microphone (Audio WAV)     ──→  Audio API    (:5001)   ──→  Audio Re
                                                          Backend WebSocket Broadcast (:8000/ws/alerts)
                                                          + Discord Dispatch Outbox (Async Worker)
                                                                                   ↓
-                                                               React Frontend Dashboard (:5173)
+                                                               React Frontend Dashboard (:5174)
 ```
 
 ### Services & Port Assignments
 
 - **Backend API**: `http://127.0.0.1:8000` (FastAPI, YOLOv8 vision, incident persistence, rate limits, WebSocket)
 - **Audio AI Service**: `http://127.0.0.1:5001` (FastAPI, YAMNet acoustic classifier, paired fusion runner)
-- **Frontend Dashboard**: `http://127.0.0.1:5173` (Vite, React, Leaflet maps, live alert feeds, telemetry stats)
+- **Frontend Dashboard**: `http://127.0.0.1:5174` (Vite, React, Leaflet maps, live alert feeds, telemetry stats)
 - **Camera MJPEG Server**: `http://127.0.0.1:8080` (Waitress, authenticated hardware camera stream)
 
 ---
@@ -181,19 +184,52 @@ Failures are **never silently downgraded to LOW**:
 ## 4. Quickstart
 
 ### Prerequisites
-- **Python**: 3.10 - 3.13 (64-bit)
-- **Node.js**: 20 LTS or 24 LTS with `npm`
+- **Python**: 3.13 (64-bit)
+- **Node.js**: 24 with `npm`
 
 ### One-Click Launch (Windows)
 Double-click `start.bat` or run from PowerShell:
 ```powershell
 .\start.bat
 ```
-`start.bat` will automatically:
-1. Verify the Python virtual environment and Node.js.
-2. Initialize `.env` with secure role tokens if missing.
-3. Install frontend dependencies if needed.
-4. Launch the Backend (8000), Audio Service (5001), and Frontend (5173).
+`start.bat` creates `.venv` when needed, installs the pinned backend requirements, preserves an existing `.env`, and synchronizes frontend dependencies with `package-lock.json` using `npm ci`. It also installs the official YAMNet audio model once (14 MB) with a pinned SHA256 checksum. It starts only this checkout's services and opens the browser after they respond. Existing services on required ports cause a clear error; they are never killed or silently reused.
+
+```powershell
+.\start.bat --setup                 # Install/refresh dependencies without starting services
+.\start.bat --check                 # Check configuration, dependencies and ports without installing
+.\start.bat --frontend-port 5175     # Use another frontend port through the guarded local proxy
+.\start.bat --camera                # Also start the local camera streamer
+.\start.bat --no-browser            # Start services without opening a browser
+```
+
+Default service ports are backend 8000, audio 5001 and frontend 5174; `--camera` also uses 8080. Ctrl+C stops the services started by this launcher. Logs append under the configured `DATA_DIR/logs` directory. Missing model files may leave inference degraded; startup reports that status instead of claiming the models are ready. Role tokens stay in `.env` and are not printed by the launcher.
+
+Audio setup can also be run independently with `.venv\Scripts\python.exe -m scripts.setup_audio_model`.
+`YAMNET_MODEL_PATH` defaults to `models/yamnet`; relative paths are resolved from the repository,
+regardless of the current terminal directory. Existing custom models are preserved. First setup
+requires internet access; subsequent starts use the installed model offline. Inference never downloads
+models. See the [official YAMNet tutorial](https://www.tensorflow.org/hub/tutorials/yamnet).
+Audio uploads accept WAV, MP3, FLAC and OGG recordings of 0.1–30 seconds, up to 20 MB,
+at 8–192 kHz with one or two channels. Camera Hub displays the acoustic label, score, risk and
+persistence receipt after an upload. Restart services after installing a previously missing model.
+
+### ESP32 alarms for vision and audio
+
+With the website running, connect the ESP32 by USB and run `start_hardware.bat` in a second
+terminal. It uses COM7 by default; use `start_hardware.bat --port COM8` for another port,
+or configure `HARDWARE_SERIAL_PORT` in `.env`. Close Arduino Serial Monitor before connecting.
+
+| Unresolved HIGH/CRITICAL detection | Existing ESP32 command | Alarm |
+| --- | --- | --- |
+| Person, gunshot/gunfire, explosion | `PERSON` | Continuous buzzer, red LED |
+| Car, vehicle, engine, chainsaw, sawing | `CAR` | Interval buzzer, red LED |
+| No remaining matching alerts | `SAFE` | Buzzer off, green LED |
+
+Continuous alarms take priority. Speech, wildlife, ambient sounds and uncertain classifications
+do not activate the alarm. Resolve or clear all matching alerts to stop it. The listener scans
+all unresolved alert pages and reconnects after USB interruptions. Backend failures retain the
+last commanded state. Ctrl+C sends `SAFE` and closes the serial port. Firmware must already
+support `SAFE`, `CAR` and `PERSON` at 115200 baud; no firmware change is required for that version.
 
 ---
 
@@ -201,8 +237,9 @@ Double-click `start.bat` or run from PowerShell:
 
 #### 1. Set Up Python Virtual Environment
 ```bash
-# Create virtual environment
-python -m venv .venv
+# Windows: create virtual environment
+py -3.13 -m venv .venv
+# macOS/Linux: python3.13 -m venv .venv
 
 # Activate environment
 # On Windows (PowerShell):
@@ -223,7 +260,7 @@ This generates a local `.env` file populated with unique, secure tokens for `ADM
 #### 3. Install Frontend Dependencies
 ```bash
 cd frontend
-npm install
+npm ci
 cd ..
 ```
 
@@ -236,7 +273,7 @@ To also launch the local hardware camera streamer:
 python -m scripts.launch --camera
 ```
 
-Open `http://127.0.0.1:5173` in your browser. Copy your `ADMIN_API_TOKEN` or `OPERATOR_API_TOKEN` from `.env` to sign into the dashboard.
+Open `http://127.0.0.1:5174` in your browser. Copy your `ADMIN_API_TOKEN` or `OPERATOR_API_TOKEN` from `.env` to sign into the dashboard.
 
 ---
 
@@ -249,7 +286,7 @@ python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
 # Audio AI Service (Port 5001)
 python -m uvicorn ai_service.audio.audio_api:app --host 127.0.0.1 --port 5001
 
-# Frontend Vite Dev Server (Port 5173)
+# Frontend Vite Dev Server (Port 5174)
 cd frontend && npm run dev
 
 # Authenticated Camera Streamer (Port 8080)
@@ -262,8 +299,8 @@ python mjpeg_server.py
 
 1. **Role-Based Access Control (RBAC)**:
    - `viewer`: Read-only access to stats, alerts, cameras.
-   - `operator`: Sensor detection ingestion, alert resolution.
-   - `admin`: System configuration, alert clearing.
+   - `operator`: Sensor detection ingestion, alert resolution and log clearing.
+   - `admin`: All operator actions and system configuration.
    - `service`: Internal inter-service communication token.
 2. **WebSocket Single-Use Tickets**:
    - Clients exchange their token for a short-lived, single-use ticket via `POST /api/auth/ws-ticket`.

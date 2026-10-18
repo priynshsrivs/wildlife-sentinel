@@ -47,6 +47,9 @@ class Detection(StrictModel):
     confidence: Confidence
     bbox: list[float] | None = Field(default=None, min_length=4, max_length=4)
     kind: Literal["species", "object", "audio"] = "object"
+    matched_rois: list[Annotated[str, Field(min_length=1, max_length=100)]] = Field(
+        default_factory=list, max_length=100
+    )
 
     @field_validator("bbox")
     @classmethod
@@ -119,4 +122,3 @@ class RangerFeedbackPayload(StrictModel):
     ]
     ranger_id: str = Field(default="ranger_default", min_length=1, max_length=100)
     notes: str = Field(default="", max_length=500)
-

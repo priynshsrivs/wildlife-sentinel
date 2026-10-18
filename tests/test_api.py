@@ -34,7 +34,14 @@ def test_roles(client):
     operator = {"Authorization": "Bearer test-operator"}
     assert client.get("/api/alerts", headers=viewer).status_code == 200
     assert client.post("/api/settings", headers=viewer, json={}).status_code == 403
-    assert client.delete("/api/alerts/clear", headers=operator).status_code == 403
+    assert client.delete("/api/alerts/clear", headers=viewer).status_code == 403
+    assert client.delete("/api/alerts/clear", headers=operator).status_code == 200
+    assert (
+        client.delete(
+            "/api/alerts/clear", headers={"Authorization": "Bearer test-service"}
+        ).status_code
+        == 403
+    )
     assert (
         client.post(
             "/api/settings", headers={"Authorization": "Bearer test-service"}, json={}
@@ -91,6 +98,27 @@ def test_model_unavailable(client, auth):
     )
     assert response.status_code == 503
     assert client.get("/health").json()["vision_ready"] is False
+    assert client.get("/api/alerts", headers=auth).json() == []
+
+
+@pytest.mark.parametrize("status,detail", [(503, "Audio model unavailable"), (422, "Unreadable audio")])
+def test_audio_upload_reports_actionable_failure(client, auth, monkeypatch, status, detail):
+    import httpx
+    from backend import main
+    from tests.test_audio_video import wav
+
+    original = httpx.AsyncClient
+    monkeypatch.setattr(
+        main.httpx,
+        "AsyncClient",
+        lambda **kwargs: original(transport=httpx.MockTransport(lambda request: httpx.Response(status))),
+    )
+    response = client.post(
+        "/api/detect/audio", headers=auth,
+        files={"audio": ("sample.wav", wav(), "audio/wav")},
+    )
+    assert response.status_code == status
+    assert detail in response.json()["detail"]
     assert client.get("/api/alerts", headers=auth).json() == []
 
 

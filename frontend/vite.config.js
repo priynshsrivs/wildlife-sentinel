@@ -1,7 +1,7 @@
-import react from '@vitejs/plugin-react'
-import { defineConfig } from 'vite'
-
-// https://vite.dev/config/
+import react from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
+import { localProxy, localProxyGuard } from "./dev-proxy.js";
 export default defineConfig({
-  plugins: [react()],
-})
+  plugins: [localProxyGuard(), react()],
+  server: { host: "127.0.0.1", port: 5174, proxy: localProxy() },
+});

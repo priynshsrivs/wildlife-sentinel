@@ -87,7 +87,7 @@ def authenticate():
     if request.path == "/health":
         return
     supplied = request.headers.get("Authorization", "")
-    if not TOKEN or not hmac.compare_digest(supplied, "Bearer " + TOKEN):
+    if not TOKEN or not supplied.isascii() or not hmac.compare_digest(supplied, "Bearer " + TOKEN):
         abort(401)
 
 
