@@ -192,7 +192,7 @@ Double-click `start.bat` or run from PowerShell:
 ```powershell
 .\start.bat
 ```
-`start.bat` creates `.venv` when needed, installs the pinned backend requirements, preserves an existing `.env`, and synchronizes frontend dependencies with `package-lock.json` using `npm ci`. It starts only this checkout's services and opens the browser after they respond. Existing services on required ports cause a clear error; they are never killed or silently reused.
+`start.bat` creates `.venv` when needed, installs the pinned backend requirements, preserves an existing `.env`, and synchronizes frontend dependencies with `package-lock.json` using `npm ci`. It also installs the official YAMNet audio model once (14 MB) with a pinned SHA256 checksum. It starts only this checkout's services and opens the browser after they respond. Existing services on required ports cause a clear error; they are never killed or silently reused.
 
 ```powershell
 .\start.bat --setup                 # Install/refresh dependencies without starting services
@@ -203,6 +203,15 @@ Double-click `start.bat` or run from PowerShell:
 ```
 
 Default service ports are backend 8000, audio 5001 and frontend 5174; `--camera` also uses 8080. Ctrl+C stops the services started by this launcher. Logs append under the configured `DATA_DIR/logs` directory. Missing model files may leave inference degraded; startup reports that status instead of claiming the models are ready. Role tokens stay in `.env` and are not printed by the launcher.
+
+Audio setup can also be run independently with `.venv\Scripts\python.exe -m scripts.setup_audio_model`.
+`YAMNET_MODEL_PATH` defaults to `models/yamnet`; relative paths are resolved from the repository,
+regardless of the current terminal directory. Existing custom models are preserved. First setup
+requires internet access; subsequent starts use the installed model offline. Inference never downloads
+models. See the [official YAMNet tutorial](https://www.tensorflow.org/hub/tutorials/yamnet).
+Audio uploads accept WAV, MP3, FLAC and OGG recordings of 0.1–30 seconds, up to 20 MB,
+at 8–192 kHz with one or two channels. Camera Hub displays the acoustic label, score, risk and
+persistence receipt after an upload. Restart services after installing a previously missing model.
 
 ---
 

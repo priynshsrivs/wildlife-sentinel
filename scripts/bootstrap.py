@@ -151,6 +151,7 @@ def main(argv=None):
             if not (ROOT / ".env").is_file():
                 details.append("Local .env configuration is missing")
             raise RuntimeError("; ".join(details) + ". Run start.bat --setup.")
+        command([str(VENV_PYTHON), "-m", "scripts.setup_audio_model", "--check"])
         return command(
             [
                 str(VENV_PYTHON),
@@ -177,6 +178,7 @@ def main(argv=None):
         )
     if not (ROOT / ".env").is_file():
         command([str(VENV_PYTHON), "-m", "scripts.init_env"])
+    command([str(VENV_PYTHON), "-m", "scripts.setup_audio_model"])
     if args.setup:
         print(
             "Setup complete. Review model/camera settings in .env, then run start.bat. Existing credentials were preserved."

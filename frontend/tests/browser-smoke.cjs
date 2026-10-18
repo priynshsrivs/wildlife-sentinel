@@ -137,6 +137,12 @@ async function freePort() {
         .getByRole("status")
         .filter({ hasText: "ingestion complete" })
         .waitFor();
+      if (index === 2) {
+        const result = page.getByRole("region", { name: "Audio detection result" });
+        await result.waitFor();
+        assert.match(await result.innerText(), /Confidence:/);
+        assert.match(await result.innerText(), /Saved to security log/);
+      }
     }
     await nav("Dashboard");
     let releaseSnapshot, markCaptured;

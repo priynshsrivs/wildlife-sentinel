@@ -121,6 +121,7 @@ export default function App({ role = "viewer" }) {
   const [webcamDetection, setWebcamDetection] = useState(null);
 
   const [uploadDetection, setUploadDetection] = useState(null);
+  const [audioDetection, setAudioDetection] = useState(null);
 
   const [wsConnected, setWsConnected] = useState(false);
 
@@ -568,6 +569,7 @@ FILE INGESTION
 ===================================================== */
 
   const handleFileUpload = async (event, type = "image") => {
+    if (type === "audio") setAudioDetection(null);
     const file = event.target.files?.[0];
 
     if (!file || uploading || !canOperate) return;
@@ -634,6 +636,7 @@ FILE INGESTION
           critical: ["HIGH", "CRITICAL"].includes(result.threat_level),
         });
       }
+      if (type === "audio") setAudioDetection(await response.json());
 
       await fetchAllData(true);
 
@@ -1376,6 +1379,7 @@ MAIN DASHBOARD
                   uploadError={uploadError}
                   analyzingUpload={analyzingUpload}
                   audioInputRef={audioInputRef}
+                  audioDetection={audioDetection}
                   backendOnline={backendOnline}
                   cameraSubTab={cameraSubTab}
                   dashboardImage={dashboardImage}

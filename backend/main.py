@@ -449,9 +449,15 @@ async def detect_audio(
                 headers={"Authorization": "Bearer " + config.SERVICE_TOKEN},
             )
             if response.status_code in (413, 415, 422, 503):
+                messages = {
+                    413: "Audio exceeds the upload limit",
+                    415: "Unsupported audio type. Use WAV, MP3, FLAC or OGG.",
+                    422: "Unreadable audio. Use a 0.1–30 second recording at 8–192 kHz with one or two channels.",
+                    503: "Audio model unavailable. Run start.bat to install the model, then restart the services.",
+                }
                 raise HTTPException(
                     response.status_code,
-                    "Audio service rejected input or model unavailable",
+                    messages[response.status_code],
                 )
             response.raise_for_status()
             result = response.json()

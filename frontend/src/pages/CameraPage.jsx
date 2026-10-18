@@ -20,6 +20,7 @@ export default function CameraPage({
   uploadError,
   analyzingUpload,
   audioInputRef,
+  audioDetection,
   backendOnline,
   cameraSubTab,
   dashboardImage,
@@ -451,6 +452,17 @@ export default function CameraPage({
               </div>
             </button>
           </div>
+
+          {audioDetection && (
+            <section className="glass-panel" aria-label="Audio detection result" style={{ marginTop: 22, padding: 22 }}>
+              <h3 style={{ margin: "0 0 12px" }}>Audio analysis</h3>
+              <p style={{ fontSize: 18, fontWeight: 700 }}>{audioDetection.label}</p>
+              <p>Confidence: {Math.round(audioDetection.confidence * 100)}% · Risk: {audioDetection.threat_level}</p>
+              <p style={{ color: COLORS.muted, fontSize: 12 }}>
+                Model: {audioDetection.model_version} · {audioDetection.persisted ? "Saved to security log" : "Not saved"}
+              </p>
+            </section>
+          )}
 
           {dashboardImage && (
             <div

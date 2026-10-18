@@ -101,6 +101,27 @@ def test_model_unavailable(client, auth):
     assert client.get("/api/alerts", headers=auth).json() == []
 
 
+@pytest.mark.parametrize("status,detail", [(503, "Audio model unavailable"), (422, "Unreadable audio")])
+def test_audio_upload_reports_actionable_failure(client, auth, monkeypatch, status, detail):
+    import httpx
+    from backend import main
+    from tests.test_audio_video import wav
+
+    original = httpx.AsyncClient
+    monkeypatch.setattr(
+        main.httpx,
+        "AsyncClient",
+        lambda **kwargs: original(transport=httpx.MockTransport(lambda request: httpx.Response(status))),
+    )
+    response = client.post(
+        "/api/detect/audio", headers=auth,
+        files={"audio": ("sample.wav", wav(), "audio/wav")},
+    )
+    assert response.status_code == status
+    assert detail in response.json()["detail"]
+    assert client.get("/api/alerts", headers=auth).json() == []
+
+
 def test_empty_inference(client, auth, monkeypatch):
     from backend.main import vision
 

@@ -38,7 +38,10 @@ INPUT_SIZE = int(os.getenv("INPUT_SIZE", "640"))
 LOW_LIGHT_ENHANCEMENT = os.getenv("LOW_LIGHT_ENHANCEMENT", "true").lower() == "true"
 DEBUG_TIMING = os.getenv("DEBUG_TIMING", "false").lower() == "true"
 CAMERA_ROIS = json.loads(os.getenv("CAMERA_ROIS_JSON", "{}"))
-YAMNET_MODEL_PATH = os.getenv("YAMNET_MODEL_PATH", "")
+_audio_path = Path(os.getenv("YAMNET_MODEL_PATH") or "models/yamnet").expanduser()
+YAMNET_MODEL_PATH = str(
+    (_audio_path if _audio_path.is_absolute() else ROOT / _audio_path).resolve()
+)
 FRONTEND_ORIGINS = [
     origin.strip().rstrip("/")
     for origin in os.getenv(
